@@ -1,0 +1,119 @@
+name,display_name,muscle_group,equipment
+ab_wheel,Ab Wheel,abs,bodyweight
+arnold_press,Arnold Press,shoulders,dumbbell
+back_extension,Back Extension,glutes,bodyweight
+barbell_bench_press,Barbell Bench Press,chest,barbell
+barbell_curl,Barbell Curl,biceps,barbell
+barbell_row,Barbell Row,back,barbell
+barbell_shrug,Barbell Shrug,shoulders,barbell
+bench_dip,Bench Dip,triceps,bodyweight
+bent_over_lateral_raise,Bent Over Lateral Raise,shoulders,dumbbell
+bicep_curl_machine,Bicep Curl Machine,biceps,machine
+box_jump,Box Jump,quads,bodyweight
+bulgarian_split_squat,Bulgarian Split Squat,quads,dumbbell
+burpee,Burpee,full_body,bodyweight
+cable_crunch,Cable Crunch,abs,cable
+cable_crossover,Cable Crossover,chest,cable
+cable_face_pull,Cable Face Pull,shoulders,cable
+cable_fly,Cable Fly,chest,cable
+cable_lateral_raise,Cable Lateral Raise,shoulders,cable
+cable_pushdown,Cable Pushdown,triceps,cable
+cable_row,Cable Row,back,cable
+calf_raise_machine,Calf Raise Machine,calves,machine
+chest_dip,Chest Dip,chest,bodyweight
+chest_fly_machine,Chest Fly Machine,chest,machine
+chin_up,Chin Up,back,bodyweight
+close_grip_bench_press,Close Grip Bench Press,triceps,barbell
+concentration_curl,Concentration Curl,biceps,dumbbell
+crunch,Crunch,abs,bodyweight
+deadlift,Deadlift,glutes,barbell
+decline_bench_press,Decline Bench Press,chest,barbell
+diamond_push_up,Diamond Push Up,triceps,bodyweight
+donkey_calf_raise,Donkey Calf Raise,calves,machine
+dumbbell_bicep_curl,Dumbbell Bicep Curl,biceps,dumbbell
+dumbbell_fly,Dumbbell Fly,chest,dumbbell
+dumbbell_lateral_raise,Dumbbell Lateral Raise,shoulders,dumbbell
+dumbbell_overhead_press,Dumbbell Overhead Press,shoulders,dumbbell
+dumbbell_row,Dumbbell Row,back,dumbbell
+dumbbell_seated_shoulder_press,Dumbbell Seated Shoulder Press,shoulders,dumbbell
+dumbbell_shrug,Dumbbell Shrug,shoulders,dumbbell
+face_pull,Face Pull,shoulders,cable
+farmer_walk,Farmers Walk,forearms,dumbbell
+flat_dumbbell_bench_press,Flat Dumbbell Bench Press,chest,dumbbell
+front_raise,Front Raise,shoulders,dumbbell
+front_squat,Front Squat,quads,barbell
+glute_bridge,Glute Bridge,glutes,bodyweight
+glute_ham_raise,Glute Ham Raise,glutes,bodyweight
+goblet_squat,Goblet Squat,quads,dumbbell
+good_morning,Good Morning,glutes,barbell
+hack_squat,Hack Squat,quads,machine
+hammer_curl,Hammer Curl,biceps,dumbbell
+hanging_leg_raise,Hanging Leg Raise,abs,bodyweight
+hip_thrust,Hip Thrust,glutes,barbell
+hollow_hold,Hollow Hold,abs,bodyweight
+hyperextension,Hyperextension,glutes,bodyweight
+incline_barbell_bench_press,Incline Barbell Bench Press,chest,barbell
+incline_curl,Incline Curl,biceps,dumbbell
+incline_dumbbell_bench_press,Incline Dumbbell Bench Press,chest,dumbbell
+incline_dumbbell_fly,Incline Dumbbell Fly,chest,dumbbell
+kettlebell_swing,Kettlebell Swing,full_body,kettlebell
+landmine_press,Landmine Press,shoulders,barbell
+lat_pulldown,Lat Pulldown,back,cable
+lateral_raise,Lateral Raise,shoulders,dumbbell
+leg_curl,Leg Curl,glutes,machine
+leg_extension,Leg Extension,quads,machine
+leg_press,Leg Press,quads,machine
+leg_raise,Leg Raise,abs,bodyweight
+lunge,Lunge,quads,dumbbell
+lying_tricep_extension,Lying Tricep Extension,triceps,dumbbell
+machine_chest_press,Machine Chest Press,chest,machine
+machine_row,Machine Row,back,machine
+machine_shoulder_press,Machine Shoulder Press,shoulders,machine
+neck_curl,Neck Curl,abs,bodyweight
+nordic_curl,Nordic Curl,glutes,bodyweight
+overhead_press,Overhead Press,shoulders,barbell
+overhead_tricep_extension,Overhead Tricep Extension,triceps,dumbbell
+pallof_press,Pallof Press,abs,cable
+pec_deck,Pec Deck,chest,machine
+pinch_grip,Vertiball Pinch Grip,forearms,bodyweight
+plank,Plank,abs,bodyweight
+preacher_curl,Preacher Curl,biceps,barbell
+pull_up,Pull Up,back,bodyweight
+push_up,Push Up,chest,bodyweight
+push_press,Push Press,shoulders,barbell
+rack_pull,Rack Pull,glutes,barbell
+rear_delt_fly,Rear Delt Fly,shoulders,dumbbell
+reverse_cable_fly,Reverse Cable Fly,shoulders,cable
+reverse_curl,Reverse Curl,biceps,barbell
+reverse_hyper,Reverse Hyper,glutes,machine
+reverse_wrist_curl,Reverse Wrist Curl,forearms,dumbbell
+romanian_deadlift,Romanian Deadlift,glutes,barbell
+russian_twist,Russian Twist,abs,bodyweight
+seated_cable_row,Seated Cable Row,back,cable
+seated_calf_raise,Seated Calf Raise,calves,machine
+seated_leg_curl,Seated Leg Curl,glutes,machine
+seated_overhead_press,Seated Overhead Press,shoulders,barbell
+shoulder_press_machine,Shoulder Press Machine,shoulders,machine
+sissy_squat,Sissy Squat,quads,bodyweight
+sit_up,Sit Up,abs,bodyweight
+skull_crusher,Skull Crusher,triceps,barbell
+smith_machine_bench_press,Smith Machine Bench Press,chest,machine
+smith_machine_squat,Smith Machine Squat,quads,machine
+snatch_grip_deadlift,Snatch Grip Deadlift,glutes,barbell
+split_squat,Split Squat,quads,barbell
+squat,Squat,quads,barbell
+standing_calf_raise,Standing Calf Raise,calves,barbell
+step_up,Step Up,quads,dumbbell
+stiff_leg_deadlift,Stiff Leg Deadlift,glutes,barbell
+sumo_deadlift,Sumo Deadlift,glutes,barbell
+t_bar_row,T Bar Row,back,barbell
+thruster,Thruster,full_body,barbell
+tricep_kickback,Tricep Kickback,triceps,dumbbell
+tricep_pushdown,Tricep Pushdown,triceps,cable
+tricep_pushdown_machine,Tricep Pushdown Machine,triceps,machine
+turkish_get_up,Turkish Get Up,full_body,kettlebell
+upright_row,Upright Row,shoulders,barbell
+weighted_dip,Weighted Dip,triceps,barbell
+weighted_pull_up,Weighted Pull Up,back,barbell
+wrist_curl,Wrist Curl,forearms,dumbbell
+zercher_squat,Zercher Squat,quads,barbell
