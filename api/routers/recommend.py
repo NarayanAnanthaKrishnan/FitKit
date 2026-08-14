@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+from api.dependencies.auth import get_current_user
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -9,7 +11,6 @@ from api.database import get_db
 from api.models.db import (
     ExerciseSet,
     ExerciseTaxonomy,
-    TelegramIdentity,
     UserProfile,
     WorkoutSession,
 )
@@ -40,6 +41,7 @@ async def recommend(
     exercise_name: str,
     target_reps: int = Query(default=DEFAULT_TARGET_REPS, ge=1),
     db: AsyncSession = Depends(get_db),
+    user: UserProfile = Depends(get_current_user),
 ):
     exercise = await db.get(ExerciseTaxonomy, exercise_name)
     if exercise is None:
@@ -48,20 +50,7 @@ async def recommend(
             detail=f"Unknown exercise: '{exercise_name}'",
         )
 
-    user = await db.scalar(select(UserProfile)
-        .outerjoin(TelegramIdentity)
-        .where(TelegramIdentity.id.is_(None))
-        .limit(1))
     today = date.today()
-
-    if user is None:
-        return RecommendationResponse(
-            decision="insufficient_data",
-            acwr_ratio=None,
-            acwr_flag="insufficient_data",
-            recovery_override=None,
-            explanation="No user profile found",
-        )
 
     session_rows = (
         await db.execute(

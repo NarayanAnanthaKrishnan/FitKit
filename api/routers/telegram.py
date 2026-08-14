@@ -5,20 +5,18 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.models.db import (
-    ExerciseSet,
-    HealthMetric,
     TelegramIdentity,
     TelegramUpdate,
     UserProfile,
     WeightMeasurement,
-    WorkoutSession,
 )
+from api.services.user_data import delete_user_data
 
 router = APIRouter(prefix="/integrations/telegram", tags=["telegram"])
 
@@ -183,45 +181,6 @@ async def _mark_update(
     )
 
 
-async def _delete_user_data(
-    db: AsyncSession,
-    user_id: Any,
-    telegram_user_id: int,
-    current_update_id: int,
-) -> None:
-    """Delete all current user data while retaining this update's idempotency marker."""
-    session_ids = select(WorkoutSession.id).where(WorkoutSession.user_id == user_id)
-    await db.execute(
-        delete(ExerciseSet).where(ExerciseSet.session_id.in_(session_ids))
-    )
-    await db.execute(delete(WorkoutSession).where(WorkoutSession.user_id == user_id))
-    await db.execute(delete(HealthMetric).where(HealthMetric.user_id == user_id))
-    await db.execute(
-        delete(WeightMeasurement).where(WeightMeasurement.user_id == user_id)
-    )
-    await db.execute(
-        delete(TelegramUpdate).where(
-            TelegramUpdate.telegram_user_id == telegram_user_id,
-            TelegramUpdate.update_id != current_update_id,
-        )
-    )
-    await db.execute(
-        delete(TelegramIdentity).where(TelegramIdentity.user_id == user_id)
-    )
-    await db.execute(delete(UserProfile).where(UserProfile.id == user_id))
-    # Keep only a non-user-identifying marker for this update, so a Telegram
-    # retry cannot recreate the deleted account and send a second response.
-    await db.execute(
-        TelegramUpdate.__table__.update()
-        .where(TelegramUpdate.update_id == current_update_id)
-        .values(
-            telegram_user_id=None,
-            processed_at=datetime.now(timezone.utc),
-            status="processed",
-        )
-    )
-
-
 @router.post("/webhook")
 async def telegram_webhook(
     update: dict[str, Any],
@@ -317,7 +276,9 @@ async def telegram_webhook(
 
         if user is None:
             raise HTTPException(status_code=500, detail="Telegram user profile not found")
-        await _delete_user_data(db, user.id, telegram_user_id, update_id)
+        await delete_user_data(
+            db, user.id, current_update_id=update_id
+        )
         await send_telegram_message(
             chat_id,
             "Your FitKit data has been permanently deleted. Send /start if you want to begin again.",

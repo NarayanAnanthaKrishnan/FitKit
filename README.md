@@ -39,7 +39,7 @@ Implemented capabilities include:
 - Health summaries and exercise recommendations
 - Idempotent health-metric insertion
 
-The first Telegram slice is now implemented: a secret-protected webhook, Telegram identity mapping, update-idempotency records, `/start` onboarding, `/help`, `/delete` with explicit `DELETE` confirmation, `/cancel`, and weight capture with historical measurement storage. Telegram processing is private-chat only. Legacy REST routes are temporarily prevented from selecting Telegram-owned profiles, but they still need proper authenticated multi-user ownership before public exposure.
+The first Telegram slice is now implemented: a secret-protected webhook, Telegram identity mapping, update-idempotency records, `/start` onboarding, `/help`, `/delete` with explicit `DELETE` confirmation, `/cancel`, and weight capture with historical measurement storage. Telegram processing is private-chat only. The structured REST routes now require the application API key plus `X-Telegram-User-Id`, and resolve that linked Telegram identity to an internal user before reading or writing data. This is an internal bridge, not public user authentication; do not expose these routes publicly until a real authenticated user context replaces it.
 
 ## Telegram and health-data boundaries
 
@@ -74,46 +74,90 @@ The companion app will request only the health categories the user approves. Tel
 
 The bot will be created through Telegram's `@BotFather`. BotFather provides a secret bot token used by the backend to call the Telegram Bot API.
 
-Store secrets in the local environment only:
+Store secrets in the local environment only. Start from the safe template:
 
-```env
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_WEBHOOK_SECRET=...
-DATABASE_URL=postgresql+asyncpg://postgres:fitkit@localhost:5432/fitkit
+```bash
+cp .env.example .env
 ```
 
-Never commit the bot token, webhook secret, API keys, or health data. The Telegram numeric `user_id` is the stable external identity used to link a Telegram account to an internal FitKit user profile; usernames are only display metadata.
+Then replace every placeholder in `.env` with local values. Never commit `.env`, the bot token, webhook secret, API keys, database credentials, or health data. If a credential is exposed, rotate it immediately; deleting the file is not enough.
+
+The Telegram numeric `user_id` is the stable external identity used to link a Telegram account to an internal FitKit user profile; usernames are only display metadata.
 
 ## Current API endpoints
 
 | Method | Endpoint | Purpose | Current status |
 |---|---|---|---|
 | `GET` | `/health` | Liveness check | Implemented |
-| `POST` | `/ingest/health` | Health Auto Export payload | Implemented; currently single-user |
-| `GET` | `/health/summary` | HRV, sleep, and resting-HR summary | Implemented; currently single-user |
-| `POST` | `/workouts` | Structured workout logging | Implemented; currently single-user |
-| `GET` | `/workouts/{exercise}/history` | Exercise history | Implemented; currently single-user |
-| `GET` | `/workouts/{workout_id}` | Workout lookup | Implemented; currently single-user |
-| `GET` | `/recommend/{exercise}` | Rule-based recommendation | Implemented; currently single-user |
+| `POST` | `/ingest/health` | Health Auto Export payload | Implemented; API-key + linked Telegram identity required |
+| `GET` | `/health/summary` | HRV, sleep, and resting-HR summary | Implemented; user-scoped through linked Telegram identity |
+| `POST` | `/workouts` | Structured workout logging | Implemented; user-scoped through linked Telegram identity |
+| `GET` | `/workouts/{exercise}/history` | Exercise history | Implemented; user-scoped through linked Telegram identity |
+| `GET` | `/workouts/{workout_id}` | Workout lookup | Implemented; user-scoped through linked Telegram identity |
+| `GET` | `/recommend/{exercise}` | Rule-based recommendation | Implemented; user-scoped through linked Telegram identity |
 | `POST` | `/integrations/telegram/webhook` | Telegram updates, `/start`, `/help`, `/delete`, `/cancel`, and weight onboarding | Implemented; private chats only; requires webhook secret and bot-token configuration |
 
 ## Quickstart
 
 Requires Python 3.12 and PostgreSQL. Docker is convenient for local development.
 
-```bash
-pip install -e ".[dev]"
+Configure `DATABASE_URL` in `.env` before starting the API. Apply the schema explicitly before startup:
 
-# Start PostgreSQL if it is not already running
+```bash
+cp .env.example .env
+# Edit .env and replace every placeholder.
+```
+
+Create and activate the project virtual environment manually, then install the constrained dependencies:
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate  # Windows Git Bash
+# source .venv/bin/activate    # Linux/macOS
+
+python -m pip install --upgrade pip
+python -m pip install -c constraints.txt -e ".[dev]"
+```
+
+Start PostgreSQL and create the isolated test database once:
+
+```bash
 docker run -d --name fitkit-postgres \
   -e POSTGRES_PASSWORD=fitkit \
   -p 5432:5432 postgres:16
 
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
-pytest tests/ -v
+until docker exec fitkit-postgres pg_isready -U postgres; do sleep 1; done
+docker exec fitkit-postgres createdb -U postgres fitkit_test
 ```
 
-Configure `DATABASE_URL` in `.env` before starting the API. The application creates the current tables and seeds the exercise taxonomy at startup.
+Apply migrations, then run the backend directly from the active virtual environment. Structured REST requests must include both `X-API-Key` and `X-Telegram-User-Id` for an already-linked Telegram account; Telegram webhook calls use their separate webhook secret:
+
+```bash
+python -m alembic upgrade head
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The API is available at `http://localhost:8000`. Keep the backend terminal open and stop it with `Ctrl+C`.
+
+Run tests from another terminal after activating `.venv` there as well:
+
+```bash
+python -m pytest tests/ -v
+```
+
+For an existing legacy database, make a backup and use the explicit validated bootstrap command:
+
+```bash
+python scripts/bootstrap_legacy_db.py --apply
+```
+
+This command creates only missing current-model tables, applies the known onboarding nullability compatibility changes, verifies required columns, and then records the Alembic baseline. It refuses to run when an Alembic version already exists. Do not use `alembic stamp head` directly unless the schema has been manually verified.
+
+The application seeds the static exercise taxonomy at startup, but it no longer creates or alters database tables implicitly. Apply migrations explicitly before starting the backend. If `fitkit_test` already exists, the one-time `createdb` command can be skipped.
+
+### Alembic and Mako files
+
+Alembic is the versioned database-schema tool. Keep `alembic.ini`, `alembic/env.py`, the migration files under `alembic/versions/`, and `alembic/script.py.mako` in source control. The first three configure/run/apply migrations; `script.py.mako` is the template used when generating a future revision. Mako itself is only a Python dependency installed into `.venv` for Alembic's template rendering. Do not commit `.venv`, `__pycache__`, or generated Mako/package files.
 
 ## Repository layout
 

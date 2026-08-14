@@ -2,6 +2,8 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+
+from api.dependencies.auth import get_current_user
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
@@ -10,7 +12,6 @@ from api.database import get_db
 from api.models.db import (
     ExerciseSet,
     ExerciseTaxonomy,
-    TelegramIdentity,
     UserProfile,
     WorkoutSession,
 )
@@ -25,20 +26,11 @@ router = APIRouter(prefix="/workouts", tags=["workouts"])
 
 
 @router.post("", response_model=WorkoutResponse, status_code=201)
-async def create_workout(body: WorkoutCreate, db: AsyncSession = Depends(get_db)):
-    user = await db.scalar(select(UserProfile)
-        .outerjoin(TelegramIdentity)
-        .where(TelegramIdentity.id.is_(None))
-        .limit(1))
-    if user is None:
-        user = UserProfile(
-            weight_kg=80.0,
-            age=30,
-            sex="male",
-            resting_hr=60,
-        )
-        db.add(user)
-
+async def create_workout(
+    body: WorkoutCreate,
+    db: AsyncSession = Depends(get_db),
+    user: UserProfile = Depends(get_current_user),
+):
     for s in body.sets:
         exercise = await db.get(ExerciseTaxonomy, s.exercise_name)
         if exercise is None:
@@ -107,6 +99,7 @@ async def exercise_history(
     exercise_name: str,
     limit: int = Query(default=10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
+    user: UserProfile = Depends(get_current_user),
 ):
     exercise = await db.get(ExerciseTaxonomy, exercise_name)
     if exercise is None:
@@ -114,13 +107,6 @@ async def exercise_history(
             status_code=404,
             detail=f"Unknown exercise: '{exercise_name}'",
         )
-
-    user = await db.scalar(select(UserProfile)
-        .outerjoin(TelegramIdentity)
-        .where(TelegramIdentity.id.is_(None))
-        .limit(1))
-    if user is None:
-        return []
 
     stmt = (
         select(WorkoutSession)
@@ -162,14 +148,13 @@ async def exercise_history(
 async def get_workout(
     workout_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    user: UserProfile = Depends(get_current_user),
 ):
     stmt = (
         select(WorkoutSession)
-        .join(UserProfile, WorkoutSession.user_id == UserProfile.id)
-        .outerjoin(TelegramIdentity)
         .where(
             WorkoutSession.id == workout_id,
-            TelegramIdentity.id.is_(None),
+            WorkoutSession.user_id == user.id,
         )
         .options(joinedload(WorkoutSession.sets))
     )

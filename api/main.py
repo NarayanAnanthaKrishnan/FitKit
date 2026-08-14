@@ -3,13 +3,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api.database import async_session_factory, init_db, seed_exercise_taxonomy
+from api.database import async_session_factory, seed_exercise_taxonomy
 from api.routers import health, ingest, recommend, telegram, workouts
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    await init_db()
+    # Database schema changes are applied explicitly with Alembic before the
+    # application starts. Startup may seed the static exercise vocabulary, but
+    # it must never create or alter tables implicitly.
     async with async_session_factory() as session:
         await seed_exercise_taxonomy(session)
     yield

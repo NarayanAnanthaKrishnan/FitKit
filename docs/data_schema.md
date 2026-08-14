@@ -6,7 +6,9 @@ This document describes the current persistence model and planned additions requ
 
 Every user-owned record must resolve to an internal `user_id`. Telegram's numeric `user_id` is an external identity used to find the internal account; it is not a substitute for internal ownership throughout the database.
 
-Never use the first row in `user_profiles` as the current user. That single-user shortcut exists in the current prototype and must be removed before Telegram supports multiple accounts.
+Schema changes are applied through the versioned Alembic migrations in `alembic/versions/`. The application no longer creates or alters tables at startup. Apply `python -m alembic upgrade head` to a clean environment; use `stamp head` only after manually verifying an existing schema.
+
+Never use the first row in `user_profiles` as the current user. Structured REST routes resolve an internal `user_id` from a linked Telegram identity; Telegram handlers resolve the same ownership path directly. An unlinked or unknown identity must be rejected rather than creating or selecting a default profile.
 
 ## Current tables
 

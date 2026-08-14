@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:fitkit@localhost:5432/fitkit
+      FITKIT_API_KEY: ci-api-key
+      TELEGRAM_BOT_TOKEN: ci-test-token
+      TELEGRAM_WEBHOOK_SECRET: ci-webhook-secret
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: fitkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -c constraints.txt -e ".[dev]"
+
+      - name: Create isolated test database
+        env:
+          PGPASSWORD: fitkit
+        run: psql -h localhost -U postgres -d postgres -c "CREATE DATABASE fitkit_test;"
+
+      - name: Check for committed secrets
+        run: python scripts/check_secrets.py --history
+
+      - name: Verify dependency consistency
+        run: python -m pip check
+
+      - name: Compile Python sources
+        run: python -m compileall -q api engine scripts tests alembic
+
+      - name: Validate migrations
+        run: |
+          python -m alembic upgrade head
+          python -m alembic check
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+          python -m alembic check
+
+      - name: Run tests
+        run: python -m pytest tests/ -q

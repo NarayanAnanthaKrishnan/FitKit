@@ -1,11 +1,12 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+
+from api.dependencies.auth import get_current_user
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
-from api.models.db import TelegramIdentity, UserProfile
+from api.models.db import UserProfile
 from api.schemas import HealthSummaryResponse
 from api.services.health_queries import get_recent_metric_readings
 
@@ -29,14 +30,11 @@ def _mean_non_none(readings: list[float | None]) -> float | None:
 
 
 @router.get("/summary", response_model=HealthSummaryResponse)
-async def health_summary(db: AsyncSession = Depends(get_db)):
+async def health_summary(
+    db: AsyncSession = Depends(get_db),
+    user: UserProfile = Depends(get_current_user),
+):
     today = date.today()
-    user = await db.scalar(select(UserProfile)
-        .outerjoin(TelegramIdentity)
-        .where(TelegramIdentity.id.is_(None))
-        .limit(1))
-    if user is None:
-        return HealthSummaryResponse(as_of=today)
 
     hrv_7day = await get_recent_metric_readings(
         db, user.id, "hrv", HRV_BASELINE_DAYS

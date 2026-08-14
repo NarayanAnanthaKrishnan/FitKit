@@ -2,13 +2,13 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+
+from api.dependencies.auth import get_current_user
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
-from api.dependencies.auth import verify_api_key
-from api.models.db import HealthMetric, TelegramIdentity, UserProfile
+from api.models.db import HealthMetric, UserProfile
 from api.schemas import HealthIngestResponse
 
 logger = logging.getLogger(__name__)
@@ -65,22 +65,8 @@ def _entry_value(entry: dict, metric_type: str) -> float | None:
 async def ingest_health(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    _: None = Depends(verify_api_key),
+    user: UserProfile = Depends(get_current_user),
 ):
-    user = await db.scalar(select(UserProfile)
-        .outerjoin(TelegramIdentity)
-        .where(TelegramIdentity.id.is_(None))
-        .limit(1))
-    if user is None:
-        user = UserProfile(
-            weight_kg=80.0,
-            age=30,
-            sex="male",
-            resting_hr=60,
-        )
-        db.add(user)
-        await db.flush()
-
     rows_to_insert = []
     skipped = 0
     skipped_reasons: list[str] = []

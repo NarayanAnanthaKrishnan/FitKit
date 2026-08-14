@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -13,10 +13,11 @@ from sqlalchemy.ext.asyncio import (
 
 load_dotenv()
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:fitkit@localhost:5432/fitkit",
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is required. Copy .env.example to .env and configure it."
+    )
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 async_session_factory = async_sessionmaker(
@@ -32,27 +33,6 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-
-
-async def init_db():
-    from api.models.db import Base
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # `create_all` does not alter existing columns. These statements make
-        # pre-Telegram databases compatible with resumable onboarding.
-        await conn.execute(
-            text("ALTER TABLE user_profiles ALTER COLUMN weight_kg DROP NOT NULL")
-        )
-        await conn.execute(
-            text("ALTER TABLE user_profiles ALTER COLUMN age DROP NOT NULL")
-        )
-        await conn.execute(
-            text("ALTER TABLE user_profiles ALTER COLUMN sex DROP NOT NULL")
-        )
-        await conn.execute(
-            text("ALTER TABLE user_profiles ALTER COLUMN resting_hr DROP NOT NULL")
-        )
 
 
 async def seed_exercise_taxonomy(db: AsyncSession):
