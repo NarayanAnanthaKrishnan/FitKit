@@ -10,7 +10,7 @@ class SetCreate(BaseModel):
     set_number: int
     reps: int = Field(ge=1)
     weight_kg: float = Field(ge=0)
-    rpe: int = Field(ge=1, le=10)
+    rpe: Optional[int] = Field(default=None, ge=1, le=10)
     rest_seconds: Optional[int] = None
     avg_heart_rate: Optional[int] = None
 
@@ -31,7 +31,7 @@ class SetResponse(BaseModel):
     set_number: int
     reps: int
     weight_kg: float
-    rpe: int
+    rpe: Optional[int] = None
     rest_seconds: Optional[int] = None
     avg_heart_rate: Optional[int] = None
 

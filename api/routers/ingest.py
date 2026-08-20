@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies.auth import get_current_user
+from api.dependencies.health_auth import get_ingest_user
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,7 +65,7 @@ def _entry_value(entry: dict, metric_type: str) -> float | None:
 async def ingest_health(
     payload: dict,
     db: AsyncSession = Depends(get_db),
-    user: UserProfile = Depends(get_current_user),
+    user: UserProfile = Depends(get_ingest_user),
 ):
     rows_to_insert = []
     skipped = 0

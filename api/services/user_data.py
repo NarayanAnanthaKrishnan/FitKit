@@ -4,8 +4,12 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.db import (
+    AgentAction,
+    DashboardLink,
     ExerciseSet,
+    FitnessGoal,
     HealthMetric,
+    HealthPairing,
     TelegramIdentity,
     TelegramUpdate,
     UserProfile,
@@ -39,6 +43,10 @@ async def delete_user_data(
     await db.execute(
         delete(WeightMeasurement).where(WeightMeasurement.user_id == user_id)
     )
+    await db.execute(delete(FitnessGoal).where(FitnessGoal.user_id == user_id))
+    await db.execute(delete(AgentAction).where(AgentAction.user_id == user_id))
+    await db.execute(delete(HealthPairing).where(HealthPairing.user_id == user_id))
+    await db.execute(delete(DashboardLink).where(DashboardLink.user_id == user_id))
 
     if telegram_user_id is not None:
         update_filter = TelegramUpdate.telegram_user_id == telegram_user_id

@@ -12,9 +12,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+from pathlib import Path
 
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from dotenv import load_dotenv
 from sqlalchemy import (
     Column,
@@ -29,7 +31,12 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from api.models.db import Base
 
-ALEMBIC_HEAD = "20260812_0001"
+_SCRIPT_LOCATION = str(Path(__file__).resolve().parent.parent / "alembic")
+
+
+def _head_revision() -> str:
+    """Resolve the current Alembic head from the migration scripts."""
+    return ScriptDirectory(_SCRIPT_LOCATION).get_current_head()
 
 
 def _validate_schema(connection) -> None:
@@ -47,7 +54,7 @@ def _alembic_version_exists(connection) -> bool:
     return inspect(connection).has_table("alembic_version")
 
 
-def _stamp_head(connection) -> None:
+def _stamp_head(connection, head: str) -> None:
     metadata = MetaData()
     version_table = Table(
         "alembic_version",
@@ -56,7 +63,7 @@ def _stamp_head(connection) -> None:
         PrimaryKeyConstraint("version_num", name="alembic_version_pkc"),
     )
     metadata.create_all(connection)
-    connection.execute(version_table.insert().values(version_num=ALEMBIC_HEAD))
+    connection.execute(version_table.insert().values(version_num=head))
 
 
 async def bootstrap(database_url: str) -> None:
@@ -76,7 +83,7 @@ async def bootstrap(database_url: str) -> None:
                 )
             )
         await connection.run_sync(_validate_schema)
-        await connection.run_sync(_stamp_head)
+        await connection.run_sync(_stamp_head, _head_revision())
     await engine.dispose()
 
 

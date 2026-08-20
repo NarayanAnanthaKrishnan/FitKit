@@ -15,7 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -50,6 +50,18 @@ class UserProfile(Base):
     )
     telegram_identity: Mapped[Optional["TelegramIdentity"]] = relationship(
         back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+    goals: Mapped[list["FitnessGoal"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    agent_actions: Mapped[list["AgentAction"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    health_pairings: Mapped[list["HealthPairing"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    dashboard_links: Mapped[list["DashboardLink"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -158,7 +170,7 @@ class ExerciseSet(Base):
     set_number: Mapped[int] = mapped_column(Integer, nullable=False)
     reps: Mapped[int] = mapped_column(Integer, nullable=False)
     weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
-    rpe: Mapped[int] = mapped_column(Integer, nullable=False)
+    rpe: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     rest_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     avg_heart_rate: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
@@ -190,6 +202,120 @@ class HealthMetric(Base):
     )
 
     user: Mapped["UserProfile"] = relationship(back_populates="health_metrics")
+
+
+class FitnessGoal(Base):
+    __tablename__ = "fitness_goals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_profiles.id"), nullable=False
+    )
+    goal_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    target_value: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(30), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    target_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["UserProfile"] = relationship(back_populates="goals")
+
+
+class AgentAction(Base):
+    __tablename__ = "agent_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_profiles.id"), nullable=False
+    )
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    input_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    result_payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending_confirmation"
+    )
+    confirmation_token: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True, unique=True
+    )
+    pending_edit_field: Mapped[Optional[str]] = mapped_column(
+        String(30), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    user: Mapped["UserProfile"] = relationship(back_populates="agent_actions")
+
+
+class DashboardLink(Base):
+    __tablename__ = "dashboard_links"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_profiles.id"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    user: Mapped["UserProfile"] = relationship(back_populates="dashboard_links")
+
+
+class HealthPairing(Base):
+    __tablename__ = "health_pairings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("user_profiles.id"), nullable=False
+    )
+    # Only the SHA-256 digest of the opaque pairing token is stored; the raw
+    # token is shown to the user once and never persisted or logged.
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped["UserProfile"] = relationship(back_populates="health_pairings")
 
 
 class ExerciseTaxonomy(Base):

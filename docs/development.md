@@ -30,12 +30,21 @@ For Windows Command Prompt, activate the environment with:
 
 ## Start PostgreSQL and migrate
 
+Run the idempotent dev-database script. It starts Docker Desktop if needed, ensures the `fitkit-postgres` container is running, creates the `fitkit` and `fitkit_test` databases, and applies migrations:
+
+```bash
+bash scripts/devdb.sh
+```
+
+For a pre-existing local database that predates Alembic (tables present but no `alembic_version`), the script stamps the base revision first and then migrates. The manual equivalent is:
+
 ```bash
 docker run -d --name fitkit-postgres \
   -e POSTGRES_PASSWORD=fitkit \
   -p 5432:5432 postgres:16
 
 until docker exec fitkit-postgres pg_isready -U postgres; do sleep 1; done
+docker exec fitkit-postgres createdb -U postgres fitkit
 docker exec fitkit-postgres createdb -U postgres fitkit_test
 python -m alembic upgrade head
 ```
@@ -77,3 +86,13 @@ Do not log webhook URLs containing bot tokens, full Telegram updates, health pay
 ## CI checks
 
 CI installs the project, creates an isolated PostgreSQL test database, checks tracked files for common credential patterns, compiles Python sources, validates the initial migration, and runs the full test suite. Normal CI does not call Telegram or a model provider.
+
+## Staging / deploy
+
+A minimal staging stack is provided as `docker-compose.yml` (PostgreSQL + API). Provide secrets through a `.env` file next to it or the shell environment, then run:
+
+```bash
+docker compose up --build
+```
+
+Required environment variables: `FITKIT_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `PUBLIC_BASE_URL` (the public HTTPS origin used to build `/connect-health` and `/dashboard` links). The container applies Alembic migrations on start before serving the API on port 8000. This is a staging foundation, not a full production deployment: still add a TLS terminator, secret management, and database backups before production use.

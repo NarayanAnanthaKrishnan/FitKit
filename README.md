@@ -119,21 +119,15 @@ python -m pip install --upgrade pip
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-Start PostgreSQL and create the isolated test database once:
+Start PostgreSQL and apply migrations with one command. It starts Docker Desktop if needed, ensures the `fitkit-postgres` container is running, creates the `fitkit` and `fitkit_test` databases, and migrates to head (idempotent — safe to re-run):
 
 ```bash
-docker run -d --name fitkit-postgres \
-  -e POSTGRES_PASSWORD=fitkit \
-  -p 5432:5432 postgres:16
-
-until docker exec fitkit-postgres pg_isready -U postgres; do sleep 1; done
-docker exec fitkit-postgres createdb -U postgres fitkit_test
+bash scripts/devdb.sh
 ```
 
-Apply migrations, then run the backend directly from the active virtual environment. Structured REST requests must include both `X-API-Key` and `X-Telegram-User-Id` for an already-linked Telegram account; Telegram webhook calls use their separate webhook secret:
+Then run the backend directly from the active virtual environment. Structured REST requests must include both `X-API-Key` and `X-Telegram-User-Id` for an already-linked Telegram account; Telegram webhook calls use their separate webhook secret:
 
 ```bash
-python -m alembic upgrade head
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 

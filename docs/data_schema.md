@@ -48,7 +48,7 @@ The profile should eventually contain stable account metadata separately from fi
 | `set_number` | `int` | Order within session |
 | `reps` | `int` | Positive integer |
 | `weight_kg` | `float` | Zero allowed for bodyweight-style entries |
-| `rpe` | `int` | Required, 1–10 |
+| `rpe` | `int?` | Optional, 1–10; missing RPE stays `NULL` and is never guessed |
 | `rest_seconds` | `int?` | Optional |
 | `avg_heart_rate` | `int?` | Optional watch value |
 
@@ -88,7 +88,7 @@ The taxonomy is seeded from `docs/exercise_taxonomy.csv`.
 
 ## Telegram/account entities
 
-`telegram_identities`, `telegram_updates`, and `weight_measurements` are implemented in the first Telegram slice. Goals, conversations, actions, and dashboard access remain planned.
+`telegram_identities`, `telegram_updates`, `weight_measurements`, `fitness_goals`, `agent_actions`, `health_pairings`, and `dashboard_links` are implemented. Conversations and messages remain planned for the later LLM phase.
 
 ### Telegram identity (implemented)
 
@@ -127,7 +127,7 @@ weight_measurements
 
 A new Telegram message such as “I weigh 75 kg today” creates a new measurement and preserves a previous 80 kg record.
 
-### `fitness_goals`
+### `fitness_goals` (implemented)
 
 ```text
 fitness_goals
@@ -145,6 +145,8 @@ fitness_goals
 ```
 
 ### Conversations and actions
+
+`agent_actions` is implemented and doubles as the pending-confirmation store and the audit trail for every interpreted mutation (`update_profile`, `create_goal`, `delete_goal`, `record_weight`, `log_workout`). A pending action carries an opaque `confirmation_token`; inline buttons resolve it and confirmation is always scoped by internal `user_id`. Full `conversations`/`messages` persistence remains planned for the later LLM phase.
 
 The agent will need traceability:
 
@@ -196,9 +198,21 @@ telegram_updates
 
 Telegram may retry webhook updates. Processing an existing `update_id` must not create a duplicate workout, weight measurement, or response-triggering action. The current `/delete` flow removes prior update markers for that Telegram identity and retains only the current marker without the external user ID, preserving retry protection without retaining the deleted identity in the marker.
 
-### Dashboard access
+### Dashboard access (implemented)
 
-Dashboard links should use a separate opaque access record or signed token with:
+`dashboard_links` stores an opaque, short-lived, revocable token (SHA-256 digest only). A link is generated from Telegram (`/dashboard`) and resolves to the owning user via the digest, never via a user ID in the URL:
+
+```text
+dashboard_links
+---------------
+ id
+ user_id
+ token_hash              SHA-256 of the opaque URL token
+ expires_at              short-lived, default 15 minutes
+ revoked_at
+ last_used_at
+ created_at
+```
 
 - Internal user scope
 - Expiration
@@ -209,6 +223,24 @@ Dashboard links should use a separate opaque access record or signed token with:
 ## Health-data boundary
 
 Telegram cannot request HealthKit permissions or read Apple Watch data directly. The short-term source is Health Auto Export. The long-term source is a native iOS companion app that requests explicit HealthKit permissions and syncs approved records to the backend.
+
+### Health Auto Export pairing (implemented)
+
+Each user gets an opaque per-user pairing token via Telegram `/connect-health`. The token is shown once, only its SHA-256 digest is stored in `health_pairings`, and creating a new token revokes the previous active one:
+
+```text
+health_pairings
+---------------
+ id
+ user_id
+ token_hash              SHA-256 of the opaque pairing token
+ status                  active or revoked
+ created_at
+ revoked_at
+ last_seen_at
+```
+
+Ingestion at `/ingest/health` authenticates with the `X-Health-Pairing-Token` header. The legacy global `X-API-Key` + `X-Telegram-User-Id` bridge remains only while `ALLOW_LEGACY_INGEST_AUTH` is enabled during rollout.
 
 Potential normalized activity types include:
 
@@ -229,7 +261,7 @@ Each metric needs documented units, timestamp/date-range semantics, source, and 
 
 ## Fitness data rules
 
-- RPE is required for recommendation decisions; missing RPE is not silently guessed.
+- RPE is optional to record; missing RPE is stored as `NULL` and never guessed. Recommendation decisions require primary-set RPE and return `insufficient_data` when it is missing.
 - Health data is optional; missing health data results in a less specific recommendation, not a separate code path.
 - Weight history is append-only by default; corrections are explicit events.
 - User-owned data is always filtered by internal `user_id`.

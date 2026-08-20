@@ -62,8 +62,8 @@ The **rule engine is the product**. The deterministic code in `engine/` owns cal
 - Health Auto Export still needs user-aware pairing instead of one global ingestion credential.
 - Database startup no longer creates or alters tables; versioned migrations are installed. Test fixtures still use isolated metadata setup, while migration parity is checked separately in CI.
 - User resolution and complete user deletion now have shared services; workout/profile/goal/conversation services remain to be extracted as those flows are added.
-- Profile fields, goals, progress summaries, conversation history, and agent-action auditing are incomplete.
-- Natural-language workout parsing is not implemented.
+- Profile editing, goals, weight/goal progress summaries, and agent-action auditing now exist in the Telegram flow; conversation history and the dashboard link remain incomplete.
+- Deterministic workout parsing is implemented (`/log`); free-form natural-language parsing awaits the LLM layer.
 - There is no private dashboard, expiring dashboard-link system, CI workflow, deployment configuration, or staging environment.
 - There is no native iOS HealthKit companion.
 - No model provider, model API key, or LLM dependency is currently approved.
@@ -187,7 +187,7 @@ The priority order is deliberate. Do not add broad LLM behavior or public deploy
 
 ### Priority 3 — Safe Telegram MVP completion without an LLM
 
-**Status:** Initial slice complete; expansion remains.
+**Status:** Deterministic command slice implemented: `/profile`, `/goals`, `/today`, `/progress`, `/health`, inline Save/Cancel confirmations, and agent-action audit records. Outbound retry/rate-limit hardening and the deferred `/insights` dashboard link remain.
 
 **Goal:** Deliver a useful, reliable Telegram product using deterministic commands before adding model complexity.
 
@@ -245,7 +245,7 @@ The priority order is deliberate. Do not add broad LLM behavior or public deploy
 
 ### Priority 5 — Validated workout and progress conversation flows
 
-**Status:** Structured workout API exists; conversational flow remains.
+**Status:** Core deterministic flow implemented. `/log` parses shorthand into typed data, normalizes units/exercises against the taxonomy, stores omitted RPE as `NULL`, shows a preview with inline Save/Cancel confirmation, and surfaces the deterministic recommendation after a confirmed save. `/recommend` reports the engine decision in chat. Remaining: single-field correction ("Edit") and multi-exercise logs.
 
 **Goal:** Let users log common workouts naturally while preserving strict structured data.
 
@@ -784,12 +784,8 @@ A phase is complete only when:
 
 ## 16. Immediate next implementation step
 
-Priority 2's initial ownership boundary is implemented. The next product slice is **Priority 3 — Safe Telegram MVP completion without an LLM**:
+The deterministic Telegram slice is now complete: onboarding, weight, goals, profile, `/today`/`/progress`/`/health`, `/log` (workout logging with preview/confirm and missing-RPE support), `/recommend`, outbound retry/rate-limit handling, agent-action audit records, and inline confirmations. Health Auto Export pairing (Priority 4) is deliberately deferred.
 
-1. add profile and goals flows;
-2. add deterministic `/today`, `/progress`, and `/health` summaries;
-3. move remaining Telegram mutations behind reusable domain services and audit records;
-4. harden outbound delivery retries and callback confirmations; and
-5. expand two-user isolation and deletion tests as each user-owned table is added.
+The next product slice is the **LLM layer (Priority 7)**: a provider-neutral model gateway, a synthetic evaluation set, bounded intent/extraction with the existing preview/confirmation policy, and a deterministic fallback so exact commands work with no model. Provider selection happens after a benchmark, not before the gateway and evaluation set exist. The deferred `/insights` dashboard link remains Priority 6.
 
 Keep the structured REST bridge private until signed/session-bound end-user authentication replaces the caller-supplied Telegram-ID context. Do not add a broad LLM chat loop or public production deployment before the deterministic flows and privacy boundaries are complete.

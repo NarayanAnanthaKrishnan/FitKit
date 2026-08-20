@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.database import async_session_factory, seed_exercise_taxonomy
-from api.routers import health, ingest, recommend, telegram, workouts
+from api.routers import dashboard, health, ingest, recommend, telegram, workouts
 
 
 @asynccontextmanager
@@ -23,6 +23,7 @@ app.include_router(recommend.router)
 app.include_router(ingest.router)
 app.include_router(health.router)
 app.include_router(telegram.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")
