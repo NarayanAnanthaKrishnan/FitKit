@@ -1,4 +1,5 @@
 import os
+import secrets
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException
@@ -9,9 +10,17 @@ from api.models.db import UserProfile
 from api.services.user_scope import get_user_by_telegram_id
 
 
+def secret_matches(received: Optional[str], expected: Optional[str]) -> bool:
+    """Constant-time comparison so header checks cannot be timing-probed."""
+    if not received or not expected:
+        return False
+    return secrets.compare_digest(
+        received.encode("utf-8"), expected.encode("utf-8")
+    )
+
+
 async def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
-    expected = os.environ.get("FITKIT_API_KEY")
-    if expected is None or x_api_key != expected:
+    if not secret_matches(x_api_key, os.environ.get("FITKIT_API_KEY")):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 

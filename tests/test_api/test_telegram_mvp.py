@@ -11,6 +11,7 @@ from api.models.db import (
     TelegramIdentity,
     UserProfile,
 )
+from tests.test_api.telegram_helpers import confirm_latest_weight
 
 pytestmark = pytest.mark.asyncio
 
@@ -71,6 +72,7 @@ async def _callback(async_client: AsyncClient, user_id: int, data: str):
 async def _onboard(async_client: AsyncClient, user_id: int, weight: str = "80 kg") -> None:
     await _send(async_client, user_id, "/start")
     await _send(async_client, user_id, weight)
+    await confirm_latest_weight(async_client, user_id)
 
 
 async def _internal_user(db_session, telegram_user_id: int) -> UserProfile:

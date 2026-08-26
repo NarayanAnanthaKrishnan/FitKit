@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.models.db import UserProfile
+from api.dependencies.auth import secret_matches
 from api.services.health_pairing_service import resolve_user_by_pairing
 from api.services.user_scope import get_user_by_telegram_id
 
@@ -35,13 +36,14 @@ async def get_ingest_user(
             )
         return user
 
-    if os.getenv("ALLOW_LEGACY_INGEST_AUTH", "1") != "1":
+    # Legacy bridge is disabled by default; enable it only while existing
+    # Health Auto Export users still authenticate with the global API key.
+    if os.getenv("ALLOW_LEGACY_INGEST_AUTH", "0") != "1":
         raise HTTPException(
             status_code=401, detail="X-Health-Pairing-Token header is required"
         )
 
-    expected = os.environ.get("FITKIT_API_KEY")
-    if expected is None or x_api_key != expected:
+    if not secret_matches(x_api_key, os.environ.get("FITKIT_API_KEY")):
         raise HTTPException(status_code=401, detail="Invalid API key")
     if telegram_user_id is None:
         raise HTTPException(

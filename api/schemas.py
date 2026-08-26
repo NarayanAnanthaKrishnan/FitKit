@@ -1,5 +1,5 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -77,3 +77,16 @@ class HealthSummaryResponse(BaseModel):
     latest_resting_hr: float | None = None
     hrv_baseline_7day: float | None = None
     as_of: date
+
+
+class ShortcutHealthIngest(BaseModel):
+    """Flat payload the Apple Shortcuts bridge POSTs (one value per metric).
+
+    Any omitted metric is simply not recorded; a timestamp defaults to the
+    server's current time so a simple 'log now' shortcut needs no date logic.
+    """
+
+    measured_at: Optional[datetime] = None
+    hrv: Optional[float] = Field(default=None, ge=0, le=300)
+    resting_hr: Optional[float] = Field(default=None, ge=0, le=250)
+    sleep_hours: Optional[float] = Field(default=None, ge=0, le=24)

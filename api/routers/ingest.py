@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.models.db import HealthMetric, UserProfile
-from api.schemas import HealthIngestResponse
+from api.schemas import HealthIngestResponse, ShortcutHealthIngest
 
 logger = logging.getLogger(__name__)
 
@@ -154,4 +154,55 @@ async def ingest_health(
         inserted=inserted,
         skipped=skipped,
         skipped_reasons=skipped_reasons,
+    )
+
+
+@router.post("/shortcut", response_model=HealthIngestResponse, status_code=201)
+async def ingest_health_shortcut(
+    payload: ShortcutHealthIngest,
+    db: AsyncSession = Depends(get_db),
+    user: UserProfile = Depends(get_ingest_user),
+):
+    """First-party Apple Shortcuts bridge (no third-party app, no iOS app).
+
+    Accepts a flat, easy-to-build payload and maps it onto the same idempotent
+    ``health_metrics`` table the Health Auto Export route uses, keyed by the
+    per-user pairing token.
+    """
+    measured_at = payload.measured_at or datetime.now(timezone.utc)
+    if measured_at.tzinfo is None:
+        measured_at = measured_at.replace(tzinfo=timezone.utc)
+    else:
+        measured_at = measured_at.astimezone(timezone.utc)
+
+    fields = (
+        ("hrv", payload.hrv),
+        ("resting_hr", payload.resting_hr),
+        ("sleep_hours", payload.sleep_hours),
+    )
+    rows_to_insert = [
+        {
+            "user_id": user.id,
+            "metric_type": metric_type,
+            "timestamp": measured_at,
+            "value": float(value),
+            "source": "apple_shortcuts",
+        }
+        for metric_type, value in fields
+        if value is not None
+    ]
+
+    inserted = 0
+    if rows_to_insert:
+        stmt = pg_insert(HealthMetric).values(rows_to_insert)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["user_id", "metric_type", "timestamp", "source"]
+        )
+        result = await db.execute(stmt)
+        inserted = result.rowcount
+
+    return HealthIngestResponse(
+        inserted=inserted,
+        skipped=0,
+        skipped_reasons=[],
     )

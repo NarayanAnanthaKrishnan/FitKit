@@ -211,6 +211,18 @@ class TestIngestHealth:
         assert data["inserted"] == 0
         assert data["skipped"] == 1
 
+    async def test_legacy_auth_disabled_by_default_rejects_bridge(
+        self, async_client: AsyncClient, db_session, monkeypatch
+    ):
+        # The client's default headers carry a valid API key and linked
+        # Telegram ID; with the rollout flag off the legacy bridge must fail.
+        monkeypatch.setenv("ALLOW_LEGACY_INGEST_AUTH", "0")
+        before = len(await _metric_rows(db_session))
+        resp = await async_client.post(INGEST_URL, json=VALID_PAYLOAD)
+        assert resp.status_code == 401
+        assert "X-Health-Pairing-Token" in resp.json()["detail"]
+        assert len(await _metric_rows(db_session)) == before
+
 
 class TestHealthSummary:
     SUMMARY_URL = "/health/summary"

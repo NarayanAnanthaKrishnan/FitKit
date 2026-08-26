@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from api.models.db import HealthMetric, HealthPairing, TelegramIdentity, UserProfile
+from tests.test_api.telegram_helpers import confirm_latest_weight
 
 pytestmark = pytest.mark.asyncio
 
@@ -66,6 +67,7 @@ async def _send(async_client: AsyncClient, user_id: int, text: str):
 async def _onboard(async_client: AsyncClient, user_id: int) -> None:
     await _send(async_client, user_id, "/start")
     await _send(async_client, user_id, "80 kg")
+    await confirm_latest_weight(async_client, user_id)
 
 
 async def _internal_user(db_session, telegram_user_id: int) -> UserProfile:
@@ -224,3 +226,98 @@ async def test_pairing_token_is_user_scoped(async_client, db_session, monkeypatc
 
     assert len(await _metric_rows(db_session, internal_a.id)) == 2
     assert len(await _metric_rows(db_session, internal_b.id)) == 0
+
+
+async def _connect_and_token(async_client, db_session, monkeypatch, user_id):
+    sent: list[str] = []
+
+    async def fake_send(chat_id, text, reply_markup=None):
+        sent.append(text)
+
+    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    await _onboard(async_client, user_id)
+    await _send(async_client, user_id, "/connect-health")
+    return _token_from(sent[-1])
+
+
+async def test_shortcut_ingest_flat_payload(async_client, db_session, monkeypatch):
+    user_id = next(_next_user_id)
+    token = await _connect_and_token(async_client, db_session, monkeypatch, user_id)
+    internal = await _internal_user(db_session, user_id)
+
+    resp = await async_client.post(
+        "/ingest/shortcut",
+        json={"hrv": 58.2, "resting_hr": 54, "sleep_hours": 6.8},
+        headers={"X-Health-Pairing-Token": token},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["inserted"] == 3
+
+    rows = await _metric_rows(db_session, internal.id)
+    assert {r.metric_type for r in rows} == {"hrv", "resting_hr", "sleep_hours"}
+    assert all(r.source == "apple_shortcuts" for r in rows)
+
+
+async def test_shortcut_ingest_idempotent_with_timestamp(
+    async_client, db_session, monkeypatch
+):
+    user_id = next(_next_user_id)
+    token = await _connect_and_token(async_client, db_session, monkeypatch, user_id)
+    internal = await _internal_user(db_session, user_id)
+
+    payload = {"measured_at": "2026-07-25T07:00:00Z", "hrv": 58.2}
+    first = await async_client.post(
+        "/ingest/shortcut",
+        json=payload,
+        headers={"X-Health-Pairing-Token": token},
+    )
+    second = await async_client.post(
+        "/ingest/shortcut",
+        json=payload,
+        headers={"X-Health-Pairing-Token": token},
+    )
+    assert first.json()["inserted"] == 1
+    assert second.json()["inserted"] == 0
+    assert len(await _metric_rows(db_session, internal.id)) == 1
+
+
+async def test_shortcut_ingest_rejects_invalid_token(async_client):
+    resp = await async_client.post(
+        "/ingest/shortcut",
+        json={"hrv": 58.2},
+        headers={"X-Health-Pairing-Token": "not-a-real-token"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_shortcut_ingest_rejects_out_of_range_values(
+    async_client, db_session, monkeypatch
+):
+    user_id = next(_next_user_id)
+    token = await _connect_and_token(async_client, db_session, monkeypatch, user_id)
+    internal = await _internal_user(db_session, user_id)
+
+    resp = await async_client.post(
+        "/ingest/shortcut",
+        json={"sleep_hours": 30},
+        headers={"X-Health-Pairing-Token": token},
+    )
+    assert resp.status_code == 422
+    assert len(await _metric_rows(db_session, internal.id)) == 0
+
+
+async def test_pairing_works_while_legacy_auth_disabled(
+    async_client, db_session, monkeypatch
+):
+    monkeypatch.setenv("ALLOW_LEGACY_INGEST_AUTH", "0")
+    user_id = next(_next_user_id)
+    token = await _connect_and_token(async_client, db_session, monkeypatch, user_id)
+    internal = await _internal_user(db_session, user_id)
+
+    resp = await async_client.post(
+        "/ingest/health",
+        json=VALID_PAYLOAD,
+        headers={"X-Health-Pairing-Token": token},
+    )
+    assert resp.status_code == 201
+    assert len(await _metric_rows(db_session, internal.id)) == 2

@@ -2,11 +2,11 @@ import os
 import re
 import secrets
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +49,7 @@ from api.services.workout_parser import parse_workouts
 router = APIRouter(prefix="/integrations/telegram", tags=["telegram"])
 
 TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
+DEFAULT_ACTION_TTL_SECONDS = 900  # pending confirmations expire after 15 minutes
 _WEIGHT_PATTERN = re.compile(
     r"^\s*(?:i\s+weigh|weight\s*(?:is|:)?)?\s*"
     r"(\d+(?:\.\d+)?)\s*(kg|kgs|kilograms?|lb|lbs|pounds?)?\s*(?:today)?\s*$",
@@ -109,7 +110,12 @@ async def answer_callback_query(callback_query_id: str, text: str | None = None)
 
 def _telegram_secret_matches(received: str | None) -> bool:
     expected = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-    return bool(expected and received and received == expected)
+    if not expected or not received:
+        return False
+    # Constant-time comparison so the webhook secret cannot be timing-probed.
+    return secrets.compare_digest(
+        received.encode("utf-8"), expected.encode("utf-8")
+    )
 
 
 def _extract_message(update: dict[str, Any]) -> tuple[int, int, str, dict[str, Any]] | None:
@@ -173,7 +179,28 @@ def _command(text: str) -> str:
 
 
 def _new_token() -> str:
-    return secrets.token_hex(8)
+    # 128 bits of entropy; fits the callback_data limit with every prefix.
+    return secrets.token_urlsafe(16)
+
+
+def _action_ttl_seconds() -> int:
+    raw = os.getenv("ACTION_CONFIRM_TTL_SECONDS")
+    try:
+        return int(raw) if raw else DEFAULT_ACTION_TTL_SECONDS
+    except ValueError:
+        return DEFAULT_ACTION_TTL_SECONDS
+
+
+def _action_expiry() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(seconds=_action_ttl_seconds())
+
+
+def _not_expired() -> Any:
+    """SQL filter matching actions whose confirmation window is still open."""
+    return or_(
+        AgentAction.expires_at.is_(None),
+        AgentAction.expires_at > datetime.now(timezone.utc),
+    )
 
 
 def _confirm_cancel_keyboard(token: str, confirm_label: str = "Save") -> dict:
@@ -312,6 +339,7 @@ async def _record_agent_action(
         input_payload=input_payload,
         status=status,
         confirmation_token=confirmation_token,
+        expires_at=_action_expiry() if status == "pending_confirmation" else None,
     )
     db.add(action)
     await db.flush()
@@ -326,6 +354,7 @@ async def _pending_action(
             AgentAction.user_id == user_id,
             AgentAction.confirmation_token == token,
             AgentAction.status == "pending_confirmation",
+            _not_expired(),
         )
     )
 
@@ -340,6 +369,7 @@ async def _pending_edit_action(
             AgentAction.user_id == user_id,
             AgentAction.status == "pending_confirmation",
             AgentAction.pending_edit_field.is_not(None),
+            _not_expired(),
         )
         .order_by(AgentAction.created_at.desc())
         .limit(1)
@@ -512,7 +542,7 @@ async def _handle_help(chat_id: int) -> None:
         "/recommend - get a recommendation (e.g. /recommend bench press)\n"
         "/delete - permanently delete your FitKit data\n"
         "/cancel - cancel the current confirmation\n"
-        "You can send a weight such as '75 kg' to record it.",
+        "You can send a weight such as '75 kg' to record it after confirming.",
     )
 
 
@@ -531,6 +561,7 @@ async def _handle_cancel(
         .where(
             AgentAction.user_id == user.id,
             AgentAction.status == "pending_confirmation",
+            _not_expired(),
         )
         .order_by(AgentAction.created_at.desc())
         .limit(1)
@@ -553,27 +584,20 @@ async def _handle_weight(
         )
         return
 
-    await record_weight(
-        db, user.id, weight_kg, datetime.now(timezone.utc), source="telegram"
-    )
+    # Parsed mutations always show a reviewable preview before writing.
+    token = _new_token()
     await _record_agent_action(
         db,
         user.id,
         "record_weight",
         {"weight_kg": weight_kg, "unit": "kg"},
-        status="completed",
+        confirmation_token=token,
     )
-
-    was_onboarding = identity.onboarding_step == "awaiting_weight"
-    if was_onboarding:
-        identity.onboarding_step = "complete"
-        message = (
-            f"Saved — your current weight is {weight_kg:.2f} kg. "
-            "Your profile is ready. Send /help to continue."
-        )
-    else:
-        message = f"Saved — your current weight is {weight_kg:.2f} kg."
-    await send_telegram_message(chat_id, message)
+    await send_telegram_message(
+        chat_id,
+        f"Record your current weight as {weight_kg:.2f} kg?",
+        reply_markup=_confirm_cancel_keyboard(token),
+    )
 
 
 async def _handle_profile(
@@ -829,18 +853,24 @@ async def _handle_connect_health(
 ) -> None:
     token, _ = await create_pairing(db, user.id)
     base_url = (os.getenv("PUBLIC_BASE_URL") or "").rstrip("/")
-    endpoint = (
+    health_endpoint = (
         f"{base_url}/ingest/health"
         if base_url
         else "https://<your-deployed-host>/ingest/health"
     )
+    shortcut_endpoint = (
+        f"{base_url}/ingest/shortcut"
+        if base_url
+        else "https://<your-deployed-host>/ingest/shortcut"
+    )
     await send_telegram_message(
         chat_id,
-        "Connect Health Auto Export to your FitKit account:\n\n"
-        "1. Install Health Auto Export on your iPhone and grant it Health access.\n"
-        "2. Add a custom REST export with this endpoint:\n"
-        f"{endpoint}\n"
-        "3. Add this header:\n"
+        "Connect health data to your FitKit account:\n\n"
+        "Health Auto Export (third-party app):\n"
+        f"  Endpoint: {health_endpoint}\n"
+        "Apple Shortcuts (no app, no third party):\n"
+        f"  Endpoint: {shortcut_endpoint}\n\n"
+        "Use this header for both:\n"
         f"X-Health-Pairing-Token: {token}\n\n"
         "Keep this token private — anyone with it can write to your health data. "
         "Send /connect-health again to rotate it.",
@@ -1274,6 +1304,22 @@ async def _execute_action(
     db: AsyncSession, user: UserProfile, action: AgentAction
 ) -> str:
     payload = action.input_payload
+
+    if action.action_type == "record_weight":
+        weight_kg = float(payload["weight_kg"])
+        await record_weight(
+            db, user.id, weight_kg, datetime.now(timezone.utc), source="telegram"
+        )
+        action.result_payload = {"weight_kg": weight_kg}
+        action.status = "completed"
+        message = f"Saved — your current weight is {weight_kg:.2f} kg."
+        identity = await db.scalar(
+            select(TelegramIdentity).where(TelegramIdentity.user_id == user.id)
+        )
+        if identity is not None and identity.onboarding_step == "awaiting_weight":
+            identity.onboarding_step = "complete"
+            message += " Your profile is ready. Send /help to continue."
+        return message
 
     if action.action_type == "update_profile":
         field_key = payload["field"]

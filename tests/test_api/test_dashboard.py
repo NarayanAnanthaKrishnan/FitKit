@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from api.models.db import TelegramIdentity, UserProfile
 from api.services.dashboard_service import create_link
+from tests.test_api.telegram_helpers import confirm_latest_weight
 
 pytestmark = pytest.mark.asyncio
 
@@ -41,6 +42,7 @@ async def _send(async_client: AsyncClient, user_id: int, text: str):
 async def _onboard(async_client: AsyncClient, user_id: int, weight: str = "80 kg") -> None:
     await _send(async_client, user_id, "/start")
     await _send(async_client, user_id, weight)
+    await confirm_latest_weight(async_client, user_id)
 
 
 async def _internal_user(db_session, telegram_user_id: int) -> UserProfile:

@@ -4,14 +4,19 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from api.models.db import (
+    AgentAction,
     TelegramIdentity,
     TelegramUpdate,
     WeightMeasurement,
 )
+from tests.test_api.telegram_helpers import (
+    SECRET_HEADERS,
+    post_callback,
+    cancel_latest_weight,
+    confirm_latest_weight,
+)
 
 pytestmark = pytest.mark.asyncio
-
-SECRET_HEADERS = {"X-Telegram-Bot-Api-Secret-Token": "test-telegram-secret"}
 
 
 def start_update(update_id: int, user_id: int = 4242, text: str = "/start") -> dict:
@@ -39,12 +44,21 @@ async def test_webhook_rejects_missing_secret(async_client: AsyncClient):
     assert response.status_code == 401
 
 
+async def test_webhook_rejects_wrong_secret(async_client: AsyncClient):
+    response = await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(1),
+        headers={"X-Telegram-Bot-Api-Secret-Token": "test-telegram-secret-x"},
+    )
+    assert response.status_code == 401
+
+
 async def test_start_creates_identity_and_sends_onboarding_prompt(
     async_client: AsyncClient, db_session, monkeypatch
 ):
     sent: list[tuple[int, str]] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
         sent.append((chat_id, text))
 
     monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
@@ -79,15 +93,19 @@ async def test_start_creates_identity_and_sends_onboarding_prompt(
     ]
 
 
-async def test_weight_message_completes_onboarding(
+async def test_weight_message_previews_then_confirms_onboarding(
     async_client: AsyncClient, db_session, monkeypatch
 ):
-    sent: list[str] = []
+    sent: list[tuple[int, str, dict | None]] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
-        sent.append(text)
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
+        sent.append((chat_id, text, reply_markup))
+
+    async def fake_answer(callback_query_id, text=None):
+        return None
 
     monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
 
     await async_client.post(
         "/integrations/telegram/webhook",
@@ -101,12 +119,32 @@ async def test_weight_message_completes_onboarding(
     )
 
     assert response.status_code == 200
+    # Nothing is written before confirmation.
     identity = await db_session.scalar(
         select(TelegramIdentity)
         .where(TelegramIdentity.telegram_user_id == 5252)
         .options(selectinload(TelegramIdentity.user))
     )
     assert identity is not None
+    assert identity.onboarding_step == "awaiting_weight"
+    assert identity.user.weight_kg is None
+    assert (
+        await db_session.scalar(
+            select(func.count(WeightMeasurement.id)).where(
+                WeightMeasurement.user_id == identity.user_id
+            )
+        )
+        == 0
+    )
+    # The bot asks for reviewable confirmation with a Save button.
+    assert sent[-1][1] == "Record your current weight as 79.83 kg?"
+    assert sent[-1][2] is not None
+
+    confirm = await confirm_latest_weight(async_client, 5252)
+    assert confirm.status_code == 200
+
+    await db_session.refresh(identity)
+    await db_session.refresh(identity.user)
     assert identity.onboarding_step == "complete"
     assert identity.user.weight_kg == pytest.approx(79.83, abs=0.01)
     measurement = await db_session.scalar(
@@ -116,9 +154,146 @@ async def test_weight_message_completes_onboarding(
     )
     assert measurement is not None
     assert measurement.weight_kg == pytest.approx(79.83, abs=0.01)
-    assert sent[-1] == (
+    assert sent[-1][:2] == (
+        5252,
         "Saved — your current weight is 79.83 kg. "
-        "Your profile is ready. Send /help to continue."
+        "Your profile is ready. Send /help to continue.",
+    )
+
+
+async def test_weight_confirm_is_single_write_on_duplicate_clicks(
+    async_client: AsyncClient, db_session, monkeypatch
+):
+    sent: list[str] = []
+
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
+        sent.append(text)
+
+    async def fake_answer(callback_query_id, text=None):
+        return None
+
+    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+
+    await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(210, user_id=5353),
+        headers=SECRET_HEADERS,
+    )
+    await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(211, user_id=5353, text="80 kg"),
+        headers=SECRET_HEADERS,
+    )
+
+    first = await confirm_latest_weight(async_client, 5353)
+    second = await post_callback(async_client, 5353, "confirm:not-a-token")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    identity = await db_session.scalar(
+        select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == 5353)
+    )
+    assert await db_session.scalar(
+        select(func.count(WeightMeasurement.id)).where(
+            WeightMeasurement.user_id == identity.user_id
+        )
+    ) == 1
+
+
+async def test_weight_cancel_does_not_save(
+    async_client: AsyncClient, db_session, monkeypatch
+):
+    sent: list[str] = []
+
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
+        sent.append(text)
+
+    async def fake_answer(callback_query_id, text=None):
+        return None
+
+    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+
+    await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(220, user_id=5454),
+        headers=SECRET_HEADERS,
+    )
+    await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(221, user_id=5454, text="82 kg"),
+        headers=SECRET_HEADERS,
+    )
+    cancelled = await cancel_latest_weight(async_client, 5454)
+
+    assert cancelled.status_code == 200
+    assert sent[-1] == "Cancelled."
+    identity = await db_session.scalar(
+        select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == 5454)
+    )
+    assert identity.onboarding_step == "awaiting_weight"
+    assert (
+        await db_session.scalar(
+            select(func.count(WeightMeasurement.id)).where(
+                WeightMeasurement.user_id == identity.user_id
+            )
+        )
+        == 0
+    )
+
+
+async def test_expired_weight_confirmation_cannot_be_saved(
+    async_client: AsyncClient, db_session, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    sent: list[str] = []
+
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
+        sent.append(text)
+
+    async def fake_answer(callback_query_id, text=None):
+        return None
+
+    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+
+    await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(230, user_id=5555),
+        headers=SECRET_HEADERS,
+    )
+    await async_client.post(
+        "/integrations/telegram/webhook",
+        json=start_update(231, user_id=5555, text="84 kg"),
+        headers=SECRET_HEADERS,
+    )
+    identity = await db_session.scalar(
+        select(TelegramIdentity).where(TelegramIdentity.telegram_user_id == 5555)
+    )
+    action = await db_session.scalar(
+        select(AgentAction).where(
+            AgentAction.user_id == identity.user_id,
+            AgentAction.action_type == "record_weight",
+            AgentAction.status == "pending_confirmation",
+        )
+    )
+    action.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db_session.commit()
+
+    response = await confirm_latest_weight(async_client, 5555)
+
+    assert response.status_code == 200
+    await db_session.refresh(identity)
+    assert identity.onboarding_step == "awaiting_weight"
+    assert (
+        await db_session.scalar(
+            select(func.count(WeightMeasurement.id)).where(
+                WeightMeasurement.user_id == identity.user_id
+            )
+        )
+        == 0
     )
 
 
@@ -127,7 +302,7 @@ async def test_delete_requires_confirmation_and_cancel_preserves_data(
 ):
     sent: list[str] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
         sent.append(text)
 
     monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
@@ -142,6 +317,7 @@ async def test_delete_requires_confirmation_and_cancel_preserves_data(
         json=start_update(251, user_id=5757, text="80 kg"),
         headers=SECRET_HEADERS,
     )
+    await confirm_latest_weight(async_client, 5757)
 
     pending = await async_client.post(
         "/integrations/telegram/webhook",
@@ -175,7 +351,7 @@ async def test_delete_confirm_removes_only_that_users_data(
 ):
     sent: list[str] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
         sent.append(text)
 
     monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
@@ -190,6 +366,7 @@ async def test_delete_confirm_removes_only_that_users_data(
         json=start_update(261, user_id=5858, text="80 kg"),
         headers=SECRET_HEADERS,
     )
+    await confirm_latest_weight(async_client, 5858)
     await async_client.post(
         "/integrations/telegram/webhook",
         json=start_update(262, user_id=5959),
@@ -200,6 +377,7 @@ async def test_delete_confirm_removes_only_that_users_data(
         json=start_update(263, user_id=5959, text="70 kg"),
         headers=SECRET_HEADERS,
     )
+    await confirm_latest_weight(async_client, 5959)
     await async_client.post(
         "/integrations/telegram/webhook",
         json=start_update(264, user_id=5858, text="/delete"),
@@ -253,7 +431,7 @@ async def test_group_messages_are_ignored_without_creating_an_identity(
 ):
     sent: list[str] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
         sent.append(text)
 
     monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
@@ -279,7 +457,7 @@ async def test_duplicate_update_is_ignored(
 ):
     sent: list[str] = []
 
-    async def fake_send(chat_id: int, text: str) -> None:
+    async def fake_send(chat_id: int, text: str, reply_markup=None) -> None:
         sent.append(text)
 
     monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)

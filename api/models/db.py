@@ -253,6 +253,11 @@ class AgentAction(Base):
     pending_edit_field: Mapped[Optional[str]] = mapped_column(
         String(30), nullable=True
     )
+    # Pending confirmations expire; completed/failed actions keep their
+    # audit trail. NULL means no expiry (legacy rows, terminal statuses).
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -35,40 +35,33 @@ Implemented capabilities include:
 - HRV and sleep recovery gates
 - Daily training-volume aggregation
 - Workout session CRUD
-- Health Auto Export ingestion for selected Apple Watch metrics
+- User-scoped Apple Health ingestion through the first-party Apple Shortcuts bridge
+- Optional legacy Health Auto Export ingestion during migration
 - Health summaries and exercise recommendations
 - Idempotent health-metric insertion
+- Copy-ready Shortcut recipe in `docs/apple_shortcuts.md`
 
-The first Telegram slice is now implemented: a secret-protected webhook, Telegram identity mapping, update-idempotency records, `/start` onboarding, `/help`, `/delete` with explicit `DELETE` confirmation, `/cancel`, and weight capture with historical measurement storage. Telegram processing is private-chat only. The structured REST routes now require the application API key plus `X-Telegram-User-Id`, and resolve that linked Telegram identity to an internal user before reading or writing data. This is an internal bridge, not public user authentication; do not expose these routes publicly until a real authenticated user context replaces it.
+The first Telegram slice is now implemented: a secret-protected webhook, Telegram identity mapping, update-idempotency records, `/start` onboarding, `/help`, `/delete` with explicit `DELETE` confirmation, `/cancel`, and weight capture with a reviewable Save/Cancel preview before any write. Telegram processing is private-chat only. The structured REST routes now require the application API key plus `X-Telegram-User-Id`, and resolve that linked Telegram identity to an internal user before reading or writing data. This is an internal bridge, not public user authentication; do not expose these routes publicly until a real authenticated user context replaces it.
 
 ## Telegram and health-data boundaries
 
 A Telegram bot cannot directly read Apple Health or Apple Watch data and cannot display the iOS HealthKit permission prompt. Telegram provides the conversation interface, while health data must arrive through a separate authorized source.
 
-### Initial bridge
+### Production bridge without a third-party exporter or FitKit iOS app
 
-The short-term prototype path keeps the existing third-party Health Auto Export flow. It requires user configuration and is not a Telegram permission mechanism or the long-term Apple integration:
+Apple Health cannot be read from a server, and Telegram cannot grant HealthKit permissions. The supported no-app path is the first-party Shortcuts bridge:
 
 ```text
 Apple Health / Watch
-    -> Health Auto Export
-    -> POST /ingest/health
+    -> Apple Shortcuts personal automation
+    -> POST /ingest/shortcut with a per-user pairing token
     -> health_metrics
-    -> Telegram summaries
+    -> Telegram summaries and recommendations
 ```
 
-### Long-term Apple integration
+Users run `/connect-health` in Telegram, copy their private endpoint and token into the Shortcut, and configure a daily personal automation. The complete recipe is in [`docs/apple_shortcuts.md`](docs/apple_shortcuts.md).
 
-The production Apple path is a native iOS companion app using HealthKit:
-
-```text
-Apple Watch / iPhone
-    -> HealthKit permissions in a native iOS app
-    -> authenticated sync to FitKit
-    -> Telegram agent and dashboard
-```
-
-The companion app will request only the health categories the user approves. Telegram can link to the setup flow, but it cannot grant HealthKit permissions by itself.
+This is a daily best-effort sync, not an always-on stream. Apple may require the phone to be unlocked, and Health/Shortcuts availability varies by iOS version. The older third-party Health Auto Export route is disabled by default and can be enabled during rollout with `ALLOW_LEGACY_INGEST_AUTH=1`.
 
 ## Telegram bot setup
 
@@ -89,7 +82,8 @@ The Telegram numeric `user_id` is the stable external identity used to link a Te
 | Method | Endpoint | Purpose | Current status |
 |---|---|---|---|
 | `GET` | `/health` | Liveness check | Implemented |
-| `POST` | `/ingest/health` | Health Auto Export payload | Implemented; API-key + linked Telegram identity required |
+| `POST` | `/ingest/shortcut` | First-party Apple Shortcuts health payload | Implemented; per-user pairing token required |
+| `POST` | `/ingest/health` | Legacy Health Auto Export payload | Implemented; disableable rollout compatibility path |
 | `GET` | `/health/summary` | HRV, sleep, and resting-HR summary | Implemented; user-scoped through linked Telegram identity |
 | `POST` | `/workouts` | Structured workout logging | Implemented; user-scoped through linked Telegram identity |
 | `GET` | `/workouts/{exercise}/history` | Exercise history | Implemented; user-scoped through linked Telegram identity |
@@ -182,7 +176,8 @@ For local operations, start PostgreSQL before the API and inspect the Uvicorn lo
 4. **Workout conversation** — validated natural-language parsing and workout logging
 5. **Private dashboard** — expiring links and user-scoped charts
 6. **Health connection** — user-aware Health Auto Export, then a native HealthKit companion
-7. **Agent orchestration** — strict tools, confirmations, audit history, and evaluation
+7. **Agent orchestration** — strict tools, confirmations, audit history, and evaluation (Groq `qwen/qwen3-32b` pilot via provider-neutral gateway)
 8. **Optional reminders** — opt-in check-ins and weekly reports
+9. **Personalized coaching (post-LLM) — per-user food/water logging and tailored nudges, deterministic targets in `engine/`, Groq-phrased
 
 See `fitness-agent-implementation-plan.md` for the detailed plan and acceptance criteria. See `docs/data_schema.md` before changing persistence models.

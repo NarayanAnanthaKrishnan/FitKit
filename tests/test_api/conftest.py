@@ -22,6 +22,9 @@ os.environ["DATABASE_URL"] = TEST_DB_URL
 os.environ["FITKIT_API_KEY"] = "test-api-key"
 os.environ["TELEGRAM_WEBHOOK_SECRET"] = "test-telegram-secret"
 os.environ["TELEGRAM_BOT_TOKEN"] = "test-token"
+# Legacy ingest auth is disabled by default in the app; the legacy-path tests
+# opt back into the rollout compatibility mode explicitly.
+os.environ["ALLOW_LEGACY_INGEST_AUTH"] = "1"
 
 from api.models.db import (
     Base,
