@@ -259,6 +259,49 @@ workout
 
 Each metric needs documented units, timestamp/date-range semantics, source, and deduplication behavior before it is added to production queries.
 
+## Planned personalization tables (post-LLM, Priority 10)
+
+Food names are open vocabulary (unlike the closed `exercise_taxonomy`); the app stores verbatim text and never invents calories.
+
+```text
+food_logs
+---------
+ id
+ user_id
+ logged_at              timestamptz — when the meal was eaten
+ meal_type              breakfast | lunch | dinner | snack | other
+ description            verbatim user text, e.g. "2 eggs + toast"
+ items_json             structured candidate from Groq parsing (nullable, JSONB)
+ calories_kcal         nullable — only when user explicitly confirms an estimate
+ source                 telegram | manual
+ created_at
+
+hydration_logs
+--------------
+ id
+ user_id
+ amount_ml              integer — milliliters
+ logged_at              timestamptz
+ source                 telegram | manual
+ created_at
+
+user_preferences
+----------------
+ id
+ user_id                unique
+ units                  kg | lb
+ timezone               IANA string, e.g. "Asia/Kolkata"
+ wake_window_start/end  time — nudges only fire inside this window
+ nudges_enabled         bool — default false, opt-in
+ quiet_hours            nullable window that suppresses nudges
+ created_at
+ updated_at
+```
+
+- `food_logs`/`hydration_logs`/`user_preferences` are user-owned (`user_id` FK), participate in `delete_user_data()`, and are covered by `agent_actions` types `log_food` / `log_water`.
+- `agent_actions` gains `log_food` / `log_water` action types with the same confirmation-token + TTL policy.
+- Deterministic hydration/calorie targets live in `engine/` (e.g., `30–35 ml/kg` + training-volume adjustment) and remain the source of truth; Groq only parses and phrases.
+
 ## Fitness data rules
 
 - RPE is optional to record; missing RPE is stored as `NULL` and never guessed. Recommendation decisions require primary-set RPE and return `insufficient_data` when it is missing.

@@ -368,6 +368,34 @@ Only after the core product is reliable:
 
 All reminders must be configurable, rate-limited, timezone-aware, and easy to disable. Voice, broad fine-tuning, and complex periodization remain later experiments rather than MVP requirements.
 
+### Priority 10 — Personalized coaching: nutrition, hydration, and tailored nudges
+
+**Status:** Planned — after LLM pilot is proven. No code exists.
+
+**Goal:** Give every user a per-user daily coaching loop around food and hydration that is personalized from their own profile, goals, history, and explicit preferences — without letting the model invent nutritional facts.
+
+**Two halves, kept separate:**
+
+- **Deterministic core in `engine/`:** hydration target (~30–35 ml/kg body weight, adjusted by recent training volume and goal type); simple calorie/macro targets derived only from profile + active goal; nudge triggers as explicit rules (e.g., no `hydration_logs` entry for N hours inside the user's waking window, no meal logged by a cutoff time). Missing data produces an explicit insufficient-data result, never a guessed value. Deterministic, testable, and cheap.
+- **LLM-bounded surface via the gateway:** parse messy food/water text such as `2 eggs + toast` or `had ~300ml water` into a typed `log_food` / `log_water` candidate, then Pydantic validation → preview/confirmation → domain service. Phrase nudges and summaries from engine-computed facts only.
+
+**Work:**
+
+- Add `user_preferences` (units, timezone, wake window, `nudges_enabled`, `quiet_hours`), `food_logs`, and `hydration_logs` tables (see `docs/data_schema.md` planned tables). Food names are open vocabulary (unlike `exercise_taxonomy`) — store verbatim `description`; `calories_kcal` stays NULL unless the user explicitly confirms an estimate. Never auto-fill calories from a nutrition DB.
+- Extend `agent_actions` with `log_food` and `log_water` types, reusing the existing confirmation-token and TTL policy.
+- Keep `engine/` free of LLM/Telegram imports; keep domain services as the single write path (both `/log` and `/logfood` call them).
+- Proactive nudges are opt-in only (extends Priority 9 constraints: configurable, rate-limited, timezone-aware, one-tap disable via `/preferences` or `/cancel`). The bot never messages first unless enabled.
+- Personalization inputs: profile completeness, active goals, weight trend, workout frequency, recent meals/water, explicit preference settings.
+- Add `/logfood`, `/logwater`, `/preferences`, and enriched `/today` (hydration progress ring) commands; nudges reuse the same Telegram delivery retry/rate-limit path.
+
+**Acceptance criteria:**
+
+- Two-user isolation for `food_logs`, `hydration_logs`, `user_preferences`; deletion removes them with the rest of user-owned data.
+- Every mutation audited via `agent_actions`; no food/water write without preview + confirmation.
+- Nudges are disabled by default, rate-limited, timezone-aware, and stopped by a single disable command; a user who never opts in receives zero proactive messages.
+- No-LLM deterministic path (`/logfood 2 eggs toast`, `/logwater 500 ml`) still works when the gateway is disabled.
+- Missing calories/entry data is never guessed; estimates are explicitly labeled and require confirmation.
+
 ## 6. LLM strategy: where it adds value
 
 ### Recommended role
@@ -526,7 +554,7 @@ A practical local experiment can use a small instruct model through a local runt
 5. Keep a frontier fallback only for low-confidence cases if the cost budget permits.
 6. Re-evaluate self-hosting only when usage, privacy requirements, or economics justify GPU operations.
 
-No current provider is selected by this plan. Provider credentials must never be committed, and any future integration requires a separate privacy, pricing, and reliability review.
+Selected provider for the pilot: **Groq, model `qwen/qwen3-32b` (Qwen3 27–32B class; exact ID to be confirmed in the Groq console as `qwen/qwen3-32b` or equivalent `qwen3-30b-a3b`)** — chosen for low latency, OpenAI-compatible JSON/tool interface, and negligible cost at pilot volume (few users × <20 msgs/day). The gateway remains provider-neutral so a frontier fallback can be added without code changes. Provider credentials must never be committed, and the external-model release gate below still applies; local synthetic-data benchmarking proceeds without external-processing approval.
 
 ### External-model release gate
 
@@ -739,7 +767,8 @@ The following are **not required for the first pilot**:
 - native iOS HealthKit synchronization;
 - complex periodization;
 - social features;
-- reminders; or
+- reminders;
+- personalized food/hydration logging and proactive nudges (Priority 10); or
 - a polished dashboard beyond the minimum private progress view.
 
 ## 14. Delivery milestones
@@ -768,6 +797,10 @@ Priority 7 complete: provider benchmark, bounded model gateway, confirmation pol
 
 Priority 9: reminders, native HealthKit, richer integrations, and further model work only after pilot evidence justifies them.
 
+### Milestone G — Personalized coaching (post-LLM)
+
+Priority 10 complete: `user_preferences`, `food_logs`/`hydration_logs`, deterministic hydration/calorie targets in `engine/`, opt-in nudge scheduler, and Groq-phrased summaries — all behind the same preview/confirmation and budget policy proven in Milestone E.
+
 ## 15. Definition of done for a phase
 
 A phase is complete only when:
@@ -786,6 +819,6 @@ A phase is complete only when:
 
 The deterministic Telegram slice is now complete: onboarding, weight, goals, profile, `/today`/`/progress`/`/health`, `/log` (workout logging with preview/confirm and missing-RPE support), `/recommend`, outbound retry/rate-limit handling, agent-action audit records, and inline confirmations. Health Auto Export pairing (Priority 4) is deliberately deferred.
 
-The next product slice is the **LLM layer (Priority 7)**: a provider-neutral model gateway, a synthetic evaluation set, bounded intent/extraction with the existing preview/confirmation policy, and a deterministic fallback so exact commands work with no model. Provider selection happens after a benchmark, not before the gateway and evaluation set exist. The deferred `/insights` dashboard link remains Priority 6.
+The next product slice is the **LLM layer (Priority 7)** on **Groq `qwen/qwen3-32b`**: a provider-neutral model gateway (with Groq as the pilot backend), a synthetic evaluation set, bounded intent/extraction with the existing preview/confirmation policy, and a deterministic fallback so exact commands work with no model. Benchmark the Groq model on the eval set; keep a frontier fallback only if low-confidence cases justify it. The deferred `/insights` dashboard link remains Priority 6, and **personalized food/hydration + nudges (Priority 10) follows Milestone E** once the gateway is proven.
 
 Keep the structured REST bridge private until signed/session-bound end-user authentication replaces the caller-supplied Telegram-ID context. Do not add a broad LLM chat loop or public production deployment before the deterministic flows and privacy boundaries are complete.
