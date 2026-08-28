@@ -176,7 +176,7 @@ For local operations, start PostgreSQL before the API and inspect the Uvicorn lo
 4. **Workout conversation** — validated natural-language parsing and workout logging
 5. **Private dashboard** — expiring links and user-scoped charts
 6. **Health connection** — user-aware Health Auto Export, then a native HealthKit companion
-7. **Agent orchestration** — strict tools, confirmations, audit history, and evaluation (Groq `qwen/qwen3-32b` pilot via provider-neutral gateway)
+7. **Agent orchestration** — strict tools, confirmations, audit history, and evaluation (Groq `openai/gpt-oss-20b` + `openai/gpt-oss-120b` pilot via provider-neutral gateway)
 8. **Optional reminders** — opt-in check-ins and weekly reports
 9. **Personalized coaching (post-LLM) — per-user food/water logging and tailored nudges, deterministic targets in `engine/`, Groq-phrased
 
