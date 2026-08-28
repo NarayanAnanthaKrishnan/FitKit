@@ -45,6 +45,7 @@ from api.services.user_data import delete_user_data
 from api.services.weight_service import record_weight
 from api.services import recommendation_service, workout_service
 from api.services.workout_parser import parse_workouts
+from api.llm.gateway import interpret_free_text, is_llm_enabled
 
 router = APIRouter(prefix="/integrations/telegram", tags=["telegram"])
 
@@ -502,10 +503,188 @@ async def _dispatch_message(
         await _handle_weight(db, identity, user, chat_id, text)
         return
 
+    # Free-text fallback via bounded LLM gateway (single model: gpt-oss-120b).
+    if is_llm_enabled():
+        try:
+            gw = await interpret_free_text(text, user_id=identity.telegram_user_id, context=None)
+        except Exception:
+            gw = None  # never crash the webhook on LLM errors
+        if gw is not None and gw.interpretation is not None and not gw.fallback:
+            interp = gw.interpretation
+            # Low confidence → ask clarification instead of preview.
+            if interp.confidence < 0.6:
+                clarification = interp.clarification or "I wasn't sure what you meant — could you rephrase or use a command like /help?"
+                await send_telegram_message(chat_id, clarification)
+                return
+            routed = await _handle_llm_interpretation(db, user, chat_id, text, interp)
+            if routed:
+                return
+
     await send_telegram_message(
         chat_id,
         "I received your message. Send /help to see the available commands.",
     )
+
+
+async def _handle_llm_interpretation(
+    db: AsyncSession, user: UserProfile, chat_id: int, text: str, interp
+) -> bool:
+    """Route a validated LLM interpretation to preview or answer handlers.
+
+    Returns True if the message was handled, False to fall through to the
+    generic help fallback.
+    """
+    intent = interp.intent
+    payload = interp.payload or {}
+    clarification = interp.clarification
+
+    if intent == "record_weight":
+        weight_kg = payload.get("weight_kg")
+        try:
+            weight_kg = float(weight_kg) if weight_kg is not None else None
+        except (TypeError, ValueError):
+            weight_kg = None
+        if weight_kg is None or not 20 <= weight_kg <= 500:
+            await send_telegram_message(
+                chat_id,
+                clarification or "Please send your weight like '80 kg' or '176 lb'.",
+            )
+            return True
+        weight_kg = round(weight_kg, 2)
+        token = _new_token()
+        await _record_agent_action(
+            db, user.id, "record_weight", {"weight_kg": weight_kg, "unit": "kg"}, confirmation_token=token
+        )
+        await send_telegram_message(
+            chat_id, f"Record your current weight as {weight_kg:.2f} kg?", reply_markup=_confirm_cancel_keyboard(token)
+        )
+        return True
+
+    if intent == "log_workout":
+        # Payload may be {"sets": [{...}]} (list) or flat {"exercise_query": "...", "sets": 3, "reps": 8, ...}
+        raw = payload.get("sets")
+        if isinstance(raw, list):
+            raw_sets = raw
+        elif isinstance(payload.get("exercise_query"), str):
+            raw_sets = [payload]
+        else:
+            raw_sets = []
+        if not raw_sets:
+            await send_telegram_message(chat_id, clarification or "I couldn't parse that workout — try /log bench press 3x8 at 80 kg, rpe 8")
+            return True
+        sets: list[dict] = []
+        exercises: list[dict] = []
+        for item in raw_sets:
+            try:
+                q = str(item.get("exercise_query") or "").strip()
+                s_count = int(item.get("sets") or 1)
+                reps = int(item.get("reps"))
+                w = float(item.get("weight_kg"))
+                rpe = item.get("rpe")
+                rpe = int(rpe) if rpe is not None else None
+            except (TypeError, ValueError):
+                await send_telegram_message(chat_id, clarification or "I couldn't parse that workout — try /log bench press 3x8 at 80 kg, rpe 8")
+                return True
+            if not 1 <= s_count <= 30 or not 1 <= reps <= 100 or not 0 < w <= 1000 or (rpe is not None and not 1 <= rpe <= 10):
+                await send_telegram_message(chat_id, "Weight/reps/rpe values look invalid — please check and resend.")
+                return True
+            canonical, candidates = await workout_service.resolve_exercise(db, q)
+            if canonical is None:
+                await send_telegram_message(chat_id, _exercise_clarification(q, candidates))
+                return True
+            exercise = await workout_service.get_exercise(db, canonical)
+            display_name = exercise.display_name if exercise else canonical
+            # Deduplicate exercise entries
+            if not any(e["name"] == canonical for e in exercises):
+                exercises.append({"name": canonical, "display": display_name})
+            for _ in range(s_count):
+                sets.append({"exercise_name": canonical, "reps": reps, "weight_kg": w, "rpe": rpe})
+        if not sets:
+            await send_telegram_message(chat_id, clarification or "No sets found in that workout.")
+            return True
+        preview_payload = {"date": date.today().isoformat(), "sets": sets, "exercises": exercises}
+        token = _new_token()
+        await _record_agent_action(db, user.id, "log_workout", preview_payload, confirmation_token=token)
+        await send_telegram_message(chat_id, _workout_preview_from_payload(preview_payload), reply_markup=_workout_confirm_keyboard(token))
+        return True
+
+    if intent == "create_goal":
+        goal_type = payload.get("goal_type")
+        target_value = payload.get("target_value")
+        unit = payload.get("unit")
+        target_date = payload.get("target_date")
+        # Handle nested shape like {"weight": {"value": 75, "unit": "kg"}} from some prompts
+        if target_value is None and isinstance(payload.get("weight"), dict):
+            w = payload["weight"]
+            target_value = w.get("value") or w.get("target_value")
+            unit = unit or w.get("unit")
+            goal_type = goal_type or "weight"
+            target_date = target_date or payload.get("target_date") or w.get("target_date")
+        if goal_type not in {"weight", "frequency"} or target_value is None:
+            await send_telegram_message(chat_id, clarification or "What goal would you like to set? Try 'weight 75 kg by 2026-12-31' or 'frequency 3 per week'.")
+            return True
+        try:
+            target_value = float(target_value)
+        except (TypeError, ValueError):
+            await send_telegram_message(chat_id, "Goal value must be a number.")
+            return True
+        # Reuse existing goal preview flow
+        spec: dict = {"goal_type": goal_type, "target_value": target_value, "unit": unit, "target_date": None}
+        if target_date:
+            try:
+                spec["target_date"] = date.fromisoformat(str(target_date))
+            except ValueError:
+                await send_telegram_message(chat_id, "Target date must be YYYY-MM-DD.")
+                return True
+        token = _new_token()
+        store_payload = {
+            "goal_type": goal_type,
+            "target_value": target_value,
+            "unit": unit,
+            "target_date": spec["target_date"].isoformat() if spec["target_date"] else None,
+        }
+        await _record_agent_action(db, user.id, "create_goal", store_payload, confirmation_token=token)
+        await send_telegram_message(chat_id, _goal_preview(spec), reply_markup=_confirm_cancel_keyboard(token))
+        return True
+
+    if intent in {"query_today", "query_progress", "query_health", "query_recommendation", "help"}:
+        if intent == "query_today":
+            snapshot = await today_snapshot(db, user.id)
+            await send_telegram_message(chat_id, _format_today(snapshot))
+            return True
+        if intent == "query_progress":
+            summary = await progress_summary(db, user.id)
+            await send_telegram_message(chat_id, _format_progress(summary))
+            return True
+        if intent == "query_health":
+            health = await health_snapshot(db, user.id)
+            await send_telegram_message(chat_id, _format_health(health))
+            return True
+        if intent == "query_recommendation":
+            # payload may contain exercise_query; fallback to first taxonomy entry hint
+            q = (payload.get("exercise_query") if isinstance(payload, dict) else None) or text
+            canonical, candidates = await workout_service.resolve_exercise(db, str(q))
+            if canonical is None:
+                await send_telegram_message(chat_id, _exercise_clarification(str(q), candidates))
+                return True
+            exercise = await workout_service.get_exercise(db, canonical)
+            display_name = exercise.display_name if exercise else canonical
+            result = await recommendation_service.get_recommendation(db, user.id, canonical)
+            await send_telegram_message(chat_id, _format_recommendation(display_name, result))
+            return True
+        if intent == "help":
+            await _handle_help(chat_id)
+            return True
+
+    if intent == "unknown":
+        await send_telegram_message(chat_id, clarification or "I didn't quite get that — try /help to see what I can do.")
+        return True
+
+    if intent == "unsafe":
+        await send_telegram_message(chat_id, clarification or "I can't help with that. Try /help for things I can do.")
+        return True
+
+    return False
 
 
 async def _handle_start(identity: TelegramIdentity, user: UserProfile, chat_id: int) -> None:
