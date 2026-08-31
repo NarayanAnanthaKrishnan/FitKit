@@ -63,10 +63,9 @@ The **rule engine is the product**. The deterministic code in `engine/` owns cal
 - Database startup no longer creates or alters tables; versioned migrations are installed. Test fixtures still use isolated metadata setup, while migration parity is checked separately in CI.
 - User resolution and complete user deletion now have shared services; workout/profile/goal/conversation services remain to be extracted as those flows are added.
 - Profile editing, goals, weight/goal progress summaries, and agent-action auditing now exist in the Telegram flow; conversation history and the dashboard link remain incomplete.
-- Deterministic workout parsing is implemented (`/log`); free-form natural-language parsing awaits the LLM layer.
-- There is no private dashboard, expiring dashboard-link system, CI workflow, deployment configuration, or staging environment.
+- Deterministic workout parsing is implemented (`/log`); free-form natural-language parsing is piloted via the Groq `openai/gpt-oss-120b` gateway (bounded, preview-gated), with deterministic fallback intact.
 - There is no native iOS HealthKit companion.
-- No model provider, model API key, or LLM dependency is currently approved.
+- Dashboard links remain local-only; CI/staging deployment hardening is still in progress.
 
 The REST API must remain treated as internal/local: the current API-key plus Telegram-ID bridge scopes records but does not cryptographically authenticate an end user. A trusted private network or a future signed/session-bound auth layer is required before public exposure.
 
@@ -304,7 +303,7 @@ The priority order is deliberate. Do not add broad LLM behavior or public deploy
 
 ### Priority 7 — LLM pilot and controlled agent orchestration
 
-**Status:** Deliberately deferred until the deterministic foundation is ready.
+**Status:** Implemented as Groq `openai/gpt-oss-120b` pilot — gateway, schemas, eval set, bounded Telegram routing, and mocked tests are in place; staging privacy review remains before a production rollout.
 
 **Goal:** Add natural-language convenience without turning the model into the source of truth.
 

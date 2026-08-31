@@ -1,6 +1,6 @@
 # FitKit — Telegram Fitness Coach
 
-FitKit is a Telegram-first fitness coaching backend. The current repository contains a tested deterministic rule engine and a single-user FastAPI/PostgreSQL API. The next product phase adds a secure Telegram adapter, multi-user ownership, progress history, and a private insights dashboard.
+FitKit is a Telegram-first fitness coaching backend. The current repository contains a tested deterministic rule engine, a user-scoped FastAPI/PostgreSQL API, a private-chat Telegram adapter, and a provider-neutral LLM gateway on Groq `openai/gpt-oss-120b`. The next phase after the LLM pilot adds personalized food/hydration logging and tailored nudges.
 
 ## Core design principles
 
@@ -18,21 +18,26 @@ FitKit is a Telegram-first fitness coaching backend. The current repository cont
 api/
 ├── main.py                  FastAPI application and lifespan
 ├── dependencies/            Authentication and request dependencies
+├── llm/                     Provider-neutral Groq gateway (gpt-oss-120b) + schemas
 ├── models/db.py             SQLAlchemy persistence models
 ├── routers/                 REST API routes
 ├── services/                Shared domain/query services
 └── schemas.py               Pydantic request/response models
 engine/                      Framework-independent fitness rules
 docs/
-├── data_schema.md           Current schema and planned Telegram additions
+├── apple_shortcuts.md       Copy-ready Shortcuts recipe
+├── data_schema.md           Current schema and planned personalization tables
+├── development.md           Local setup including LLM toggling and eval
 └── exercise_taxonomy.csv    Canonical exercise vocabulary
-scripts/fetch_wger.py        Optional exercise taxonomy generator
+scripts/
+├── devdb.sh                 Idempotent PostgreSQL + migration bootstrap
+├── eval_groq.py             Groq benchmark harness for tests/eval
+└── fetch_wger.py            Optional exercise taxonomy generator
 tests/
+├── eval/cases.jsonl         Synthetic LLM eval set (versioned)
 ├── test_engine/             Rule-engine unit tests
-└── test_api/                API integration tests
+└── test_api/                API integration tests (mocked LLM)
 ```
-
-The former empty ML parser/voice placeholders were removed. Do not reintroduce model-specific directories until an actual model implementation is approved.
 
 ## Current functionality
 
@@ -44,7 +49,7 @@ The engine provides:
 - HRV/sleep recovery gates
 - Recommendation orchestration
 
-The API provides the current structured workout routes, health summary, Health Auto Export ingestion, recommendation route, and the initial Telegram webhook slice. Telegram identity, update idempotency, `/start`, `/help`, `/delete` with explicit confirmation, `/cancel`, and weight measurement capture exist; Telegram processing is private-chat only. The legacy REST routes remain effectively single-user and the full multi-user ownership layer, goals, conversation storage, dashboard, and HealthKit companion are still planned.
+The API provides the current structured workout routes, health summary, Health Auto Export ingestion, recommendation route, and the initial Telegram webhook slice. Telegram identity, update idempotency, `/start`, `/help`, `/delete` with explicit confirmation, `/cancel`, `/profile`, `/goals`, `/today`/`/progress`/`/health`, `/log` with preview + inline Edit, `/connect-health`, `/dashboard`, and `/recommend` exist; Telegram processing is private-chat only and free-text is optionally routed via the Groq gateway (`LLM_ENABLED=1`) with confidence-gated previews. The legacy REST routes are user-scoped via `X-API-Key` + `X-Telegram-User-Id` and the full HealthKit companion is still planned. The LLM gateway handles intent + structured extraction; `tests/eval/cases.jsonl` + `scripts/eval_groq.py` cover the pilot benchmark.
 
 ## Telegram architecture
 
@@ -95,6 +100,7 @@ Mutating operations should be auditable. Store the interpreted action, validatio
 - Introduce a migration tool before production schema evolution; `create_all` is currently only the local bootstrap and migrations are not yet installed.
 - Keep exercise names in the canonical taxonomy. Parsers normalize into taxonomy names; they do not create arbitrary exercise records.
 - Missing RPE remains missing; do not default it for recommendation decisions.
+- Never log `GROQ_API_KEY`, bot tokens, webhook secrets, or raw health payloads; LLM metrics are redacted (model, latency, token counts only).
 
 ## Local operations
 
@@ -133,5 +139,7 @@ New Telegram work must include tests for:
 6. Build a private dashboard and secure Telegram links.
 7. Make Health Auto Export user-aware and validate real payloads.
 8. Build a native iOS HealthKit companion when the Telegram MVP is proven.
+9. LLM pilot on Groq `openai/gpt-oss-120b` — provider-neutral gateway, synthetic eval, bounded extraction, confirmation policy (current).
+10. Personalized food/hydration logging and tailored nudges — deterministic targets in `engine/`, Groq-phrased, opt-in (next).
 
-Do not start with reminders, fine-tuning, voice, or broad frontend work before the core user-owned Telegram flow is reliable.
+Do not start with reminders, fine-tuning, voice, or broad frontend work before the core user-owned Telegram flow is reliable. Keep `GROQ_API_KEY` out of logs and source control; disable the gateway with `LLM_ENABLED=0` for deterministic-only operation.

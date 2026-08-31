@@ -2,7 +2,7 @@
 
 FitKit is a fitness-coaching backend designed to support a conversational Telegram agent. Users will be able to log workouts, record progress, ask for health and training summaries, receive deterministic recommendations, and open a private insights dashboard.
 
-The existing rule engine remains the product's decision-making core. A future language model may interpret messy messages or phrase responses, but it must not replace the validated fitness rules.
+The existing rule engine remains the product's decision-making core. A language model interprets messy free-text messages and phrases responses on Groq `openai/gpt-oss-120b`, but it never replaces validated fitness rules — every LLM candidate is Pydantic-validated and requires a Save/Cancel preview.
 
 ## Product direction
 
@@ -40,8 +40,10 @@ Implemented capabilities include:
 - Health summaries and exercise recommendations
 - Idempotent health-metric insertion
 - Copy-ready Shortcut recipe in `docs/apple_shortcuts.md`
+- Provider-neutral LLM gateway on Groq `openai/gpt-oss-120b` — bounded intent + structured extraction for free-text Telegram messages with confidence-gated previews
+- Synthetic eval set in `tests/eval/cases.jsonl` + benchmark harness `scripts/eval_groq.py`
 
-The first Telegram slice is now implemented: a secret-protected webhook, Telegram identity mapping, update-idempotency records, `/start` onboarding, `/help`, `/delete` with explicit `DELETE` confirmation, `/cancel`, and weight capture with a reviewable Save/Cancel preview before any write. Telegram processing is private-chat only. The structured REST routes now require the application API key plus `X-Telegram-User-Id`, and resolve that linked Telegram identity to an internal user before reading or writing data. This is an internal bridge, not public user authentication; do not expose these routes publicly until a real authenticated user context replaces it.
+Telegram is now full-slice with optional LLM: secret-protected webhook, Telegram identity mapping, update-idempotency, `/start`, `/help`, `/delete` with `DELETE` confirmation, `/cancel`, weight capture with Save/Cancel preview, `/log` with preview + inline Edit, `/profile`, `/goals`, `/today`, `/progress`, `/health`, `/connect-health`, `/dashboard`, and `/recommend`. Free-text like `my weight is 82 kg` or `bench 3x8 at 80 kg rpe 8` is routed through the Groq gateway only when `LLM_ENABLED=1`; low-confidence or invalid output asks clarification, and every write still requires confirmation. Telegram processing is private-chat only. The structured REST routes require `X-API-Key` + `X-Telegram-User-Id` resolving a linked Telegram identity — internal bridge only, not public auth.
 
 ## Telegram and health-data boundaries
 
@@ -73,9 +75,24 @@ Store secrets in the local environment only. Start from the safe template:
 cp .env.example .env
 ```
 
-Then replace every placeholder in `.env` with local values. Never commit `.env`, the bot token, webhook secret, API keys, database credentials, or health data. If a credential is exposed, rotate it immediately; deleting the file is not enough.
+Then replace every placeholder in `.env` with local values. Minimum for the full stack:
+
+| Variable | Required for | Notes |
+|---|---|---|
+| `DATABASE_URL` | always | `postgresql+asyncpg://postgres:fitkit@localhost:5432/fitkit` for local dev |
+| `FITKIT_API_KEY` | REST bridge | internal key for `X-API-Key` |
+| `TELEGRAM_BOT_TOKEN` | Telegram | from `@BotFather`, never commit |
+| `TELEGRAM_WEBHOOK_SECRET` | Telegram | long random string, sent as `secret_token` on webhook registration |
+| `PUBLIC_BASE_URL` | health + dashboard links | e.g. `http://localhost:8000` locally, `https://fitkit.example.com` in staging |
+| `GROQ_API_KEY` | LLM | Groq console key for `openai/gpt-oss-120b`; omit or set `LLM_ENABLED=0` to run without LLM |
+| `GROQ_MODEL` | LLM | `openai/gpt-oss-120b` (default); override only for experiments |
+| `LLM_ENABLED` | LLM | `1` to enable free-text gateway, `0` to disable (fallback to deterministic commands) |
+
+Never commit `.env`, the bot token, webhook secret, `GROQ_API_KEY`, API keys, database credentials, or health data. If a credential is exposed, rotate it immediately; deleting the file is not enough.
 
 The Telegram numeric `user_id` is the stable external identity used to link a Telegram account to an internal FitKit user profile; usernames are only display metadata.
+
+> **LLM off by default:** If `GROQ_API_KEY` is missing or `LLM_ENABLED=0`, the gateway falls back to deterministic commands (`/start`, `/log`, bare weight like `80 kg`) and asks `Send /help` for unrecognized free text. No Groq call is made and no tests require a live key.
 
 ## Current API endpoints
 
@@ -93,16 +110,22 @@ The Telegram numeric `user_id` is the stable external identity used to link a Te
 
 ## Quickstart
 
-Requires Python 3.12 and PostgreSQL. Docker is convenient for local development.
+Requires Python 3.12 and PostgreSQL. Docker is convenient for local development. Groq access is optional — see LLM rows in the table above.
 
-Configure `DATABASE_URL` in `.env` before starting the API. Apply the schema explicitly before startup:
+### 1. Configure the environment
 
 ```bash
 cp .env.example .env
 # Edit .env and replace every placeholder.
+# For Telegram + LLM locally:
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET from @BotFather
+#   PUBLIC_BASE_URL=http://localhost:8000 (or your tunnel host in staging)
+#   GROQ_API_KEY from https://console.groq.com (leave unset + LLM_ENABLED=0 to run without LLM)
 ```
 
-Create and activate the project virtual environment manually, then install the constrained dependencies:
+### 2. Create the virtual environment
+
+Run these commands manually from the repository root:
 
 ```bash
 python -m venv .venv
@@ -113,35 +136,83 @@ python -m pip install --upgrade pip
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-Start PostgreSQL and apply migrations with one command. It starts Docker Desktop if needed, ensures the `fitkit-postgres` container is running, creates the `fitkit` and `fitkit_test` databases, and migrates to head (idempotent — safe to re-run):
+### 3. Start PostgreSQL and migrate
+
+One idempotent command starts Docker Desktop if needed, ensures the `fitkit-postgres` container is running, creates the `fitkit` and `fitkit_test` databases, and migrates to head:
 
 ```bash
 bash scripts/devdb.sh
 ```
 
-Then run the backend directly from the active virtual environment. Structured REST requests must include both `X-API-Key` and `X-Telegram-User-Id` for an already-linked Telegram account; Telegram webhook calls use their separate webhook secret:
+Manual equivalent (Linux/macOS or if the script is unavailable):
 
 ```bash
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+docker run -d --name fitkit-postgres -e POSTGRES_PASSWORD=fitkit -p 5432:5432 postgres:16
+until docker exec fitkit-postgres pg_isready -U postgres; do sleep 1; done
+docker exec fitkit-postgres createdb -U postgres fitkit
+docker exec fitkit-postgres createdb -U postgres fitkit_test
+python -m alembic upgrade head
 ```
 
-The API is available at `http://localhost:8000`. Keep the backend terminal open and stop it with `Ctrl+C`.
-
-Run tests from another terminal after activating `.venv` there as well:
-
-```bash
-python -m pytest tests/ -v
-```
-
-For an existing legacy database, make a backup and use the explicit validated bootstrap command:
+For a pre-existing local database that predates Alembic, back up first then:
 
 ```bash
 python scripts/bootstrap_legacy_db.py --apply
 ```
 
-This command creates only missing current-model tables, applies the known onboarding nullability compatibility changes, verifies required columns, and then records the Alembic baseline. It refuses to run when an Alembic version already exists. Do not use `alembic stamp head` directly unless the schema has been manually verified.
+### 4. Run the API
+
+From the active virtual environment, with PostgreSQL running:
+
+```bash
+python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+- The API is available at `http://localhost:8000`; liveness check is `GET /health`.
+- Structured REST requests must include both `X-API-Key` and `X-Telegram-User-Id` for an already-linked Telegram account; Telegram webhook calls use the separate `X-Telegram-Bot-Api-Secret-Token` header.
+- With `LLM_ENABLED=1` and a valid `GROQ_API_KEY`, free-text like `my weight is 82 kg` is interpreted via Groq `openai/gpt-oss-120b` into a preview; with `LLM_ENABLED=0` the same input falls back to `Send /help`.
+- Keep the backend terminal open and stop it with `Ctrl+C`.
+
+### 5. Run tests
+
+From another terminal after activating `.venv` there as well:
+
+```bash
+# All tests (mocked LLM — no Groq key or network needed):
+python -m pytest tests/ -v
+# Or by suite:
+python -m pytest tests/test_engine -v
+python -m pytest tests/test_api -v
+# Optional: real Groq benchmark (requires GROQ_API_KEY; synthetic data only):
+python scripts/eval_groq.py --model openai/gpt-oss-120b
+# Offline eval (no Groq key):
+python scripts/eval_groq.py --mock
+```
 
 The application seeds the static exercise taxonomy at startup, but it no longer creates or alters database tables implicitly. Apply migrations explicitly before starting the backend. If `fitkit_test` already exists, the one-time `createdb` command can be skipped.
+
+### 6. Expose Telegram locally (optional)
+
+For Telegram, the bot needs a public HTTPS URL. Use Cloudflare Tunnel or ngrok:
+
+```bash
+# Example with Cloudflare Tunnel (install cloudflared first):
+cloudflared tunnel --url http://localhost:8000
+# or: ngrok http 8000
+```
+
+Then register the development bot webhook (replace `TUNNEL_HOST`):
+
+```bash
+curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://TUNNEL_HOST/integrations/telegram/webhook","secret_token":"'"$TELEGRAM_WEBHOOK_SECRET"'","max_connections":40}'
+# Verify:
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo"
+curl http://localhost:8000/health
+```
+
+When the tunnel URL changes, re-register the webhook and verify `/health` before testing `/start` in Telegram. Keep webhook URLs that contain bot tokens out of logs.
 
 ### Alembic and Mako files
 
@@ -152,16 +223,24 @@ Alembic is the versioned database-schema tool. Keep `alembic.ini`, `alembic/env.
 ```text
 api/
   dependencies/       Authentication helpers
+  llm/                Provider-neutral Groq gateway (gpt-oss-120b) + schemas
   models/             SQLAlchemy models
   routers/            REST routes
-  services/           Shared database queries
+  services/           Shared domain/query services
 engine/               Deterministic fitness rule engine
 docs/
-  data_schema.md      Current schema and planned Telegram-era additions
+  apple_shortcuts.md  Copy-ready Shortcuts recipe
+  data_schema.md      Current schema and planned personalization tables
+  development.md      Local setup and Telegram/LLM testing
   exercise_taxonomy.csv
 scripts/
+  devdb.sh            Idempotent PostgreSQL + migration bootstrap
+  eval_groq.py        Groq benchmark harness for tests/eval
   fetch_wger.py       Exercise taxonomy helper
-tests/                Engine and API tests
+tests/
+  eval/cases.jsonl    Synthetic LLM eval set (versioned)
+  test_engine/        Rule-engine unit tests
+  test_api/           API integration tests (mocked LLM in normal CI)
 ```
 
 Generated logs, caches, environment files, and package metadata are local artifacts and are ignored by `.gitignore`. The existing `uvicorn_out.log` and `uvicorn_err.log` files are locked by the local execution environment and remain temporarily; they are not application source and should be removed when no process holds them.
