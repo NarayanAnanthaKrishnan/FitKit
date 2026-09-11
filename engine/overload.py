@@ -62,6 +62,8 @@ def check_overload(history: list[SessionLog], target_reps: int) -> OverloadDecis
         for s in recent
     )
     if hit_target_at_low_rpe:
+        if len({_primary_set(s.sets).weight_kg for s in recent}) != 1:
+            return OverloadDecision.HOLD
         return OverloadDecision.INCREASE_LOAD
 
     last_n = history[-HIGH_RPE_SESSIONS_FOR_DELOAD:]

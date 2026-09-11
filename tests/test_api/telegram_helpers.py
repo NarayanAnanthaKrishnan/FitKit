@@ -86,3 +86,10 @@ async def cancel_latest_weight(async_client: AsyncClient, user_id: int):
     return await _resolve_and_post(
         async_client, user_id, action_type="record_weight", prefix="cancel"
     )
+
+
+async def enable_ai(async_client, user_id):
+    update_id = next(_next_cb_update_id)
+    await async_client.post("/integrations/telegram/webhook", headers=SECRET_HEADERS, json={"update_id": update_id,
+        "message": {"from": {"id": user_id}, "chat": {"id": user_id, "type": "private"}, "text": "/preferences ai on"}})
+    return await _resolve_and_post(async_client, user_id, action_type="set_preference", prefix="confirm")

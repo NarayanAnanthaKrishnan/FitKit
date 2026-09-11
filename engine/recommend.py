@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 from engine.acwr import acwr_flag, compute_acwr
@@ -13,18 +13,25 @@ class Recommendation:
     acwr_flag: str
     recovery_override: str | None
     explanation: str
+    rule_version: str = "2.0"
+    as_of: date | None = None
+    target_reps: int | None = None
+    missing_inputs: list[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
+    freshness: dict = field(default_factory=dict)
+    suggested_load_kg: float | None = None
 
 
 def get_recommendation(
     exercise_history: list[SessionLog],
-    target_reps: int,
+    target_reps: int | None,
     daily_volume: dict[date, float],
     today: date,
     hrv_readings_last_3days: list[float | None] | None = None,
     hrv_baseline_7day: float | None = None,
     sleep_readings_last_3days: list[float | None] | None = None,
 ) -> Recommendation:
-    base_decision = check_overload(exercise_history, target_reps)
+    base_decision = check_overload(exercise_history, target_reps) if target_reps is not None else OverloadDecision.INSUFFICIENT_DATA
 
     ratio = compute_acwr(daily_volume, today)
     risk_flag = acwr_flag(ratio)
@@ -36,7 +43,7 @@ def get_recommendation(
 
     if recovery_override is not None:
         return Recommendation(
-            decision=OverloadDecision.HOLD,
+            decision=(OverloadDecision.HOLD if base_decision == OverloadDecision.INCREASE_LOAD else base_decision),
             acwr_ratio=ratio,
             acwr_flag=risk_flag,
             recovery_override=recovery_override,

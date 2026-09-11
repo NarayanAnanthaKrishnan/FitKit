@@ -29,6 +29,7 @@ async def create_pairing(
 ) -> tuple[str, HealthPairing]:
     """Rotate to a fresh active pairing and return ``(raw_token, pairing)``."""
     now = datetime.now(timezone.utc)
+    await db.scalar(select(UserProfile.id).where(UserProfile.id == user_id).with_for_update())
     existing = await db.scalars(
         select(HealthPairing).where(
             HealthPairing.user_id == user_id,

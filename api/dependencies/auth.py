@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
 from api.models.db import UserProfile
 from api.services.user_scope import get_user_by_telegram_id
+from api.config import settings
 
 
 def secret_matches(received: Optional[str], expected: Optional[str]) -> bool:
@@ -20,7 +21,7 @@ def secret_matches(received: Optional[str], expected: Optional[str]) -> bool:
 
 
 async def verify_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
-    if not secret_matches(x_api_key, os.environ.get("FITKIT_API_KEY")):
+    if not secret_matches(x_api_key, settings.fitkit_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 

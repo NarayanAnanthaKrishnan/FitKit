@@ -141,7 +141,7 @@ class TestIngestHealth:
         data = resp.json()
         assert data["inserted"] == 2
         assert data["skipped"] == 1
-        assert any("step_count" in r for r in data["skipped_reasons"])
+        assert "unmapped_metric" in data["skipped_reasons"]
 
         rows = await _metric_rows(db_session)
         assert {r.metric_type for r in rows} == {"hrv", "sleep_hours"}
@@ -170,7 +170,7 @@ class TestIngestHealth:
         data = resp.json()
         assert data["inserted"] == 1
         assert data["skipped"] == 1
-        assert any("missing qty/Avg" in r for r in data["skipped_reasons"])
+        assert "invalid_value_or_timestamp" in data["skipped_reasons"]
 
         rows = await _metric_rows(db_session)
         assert len(rows) == 1

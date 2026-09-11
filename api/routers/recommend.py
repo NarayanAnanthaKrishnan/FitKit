@@ -14,7 +14,7 @@ router = APIRouter(prefix="/recommend", tags=["recommend"])
 @router.get("/{exercise_name}", response_model=RecommendationResponse)
 async def recommend(
     exercise_name: str,
-    target_reps: int = Query(default=recommendation_service.DEFAULT_TARGET_REPS, ge=1),
+    target_reps: int | None = Query(default=None, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: UserProfile = Depends(get_current_user),
 ):
@@ -34,4 +34,7 @@ async def recommend(
         acwr_flag=result.acwr_flag,
         recovery_override=result.recovery_override,
         explanation=result.explanation,
+        rule_version=result.rule_version, as_of=result.as_of, target_reps=result.target_reps,
+        missing_inputs=result.missing_inputs, reasons=result.reasons,
+        freshness=result.freshness, suggested_load_kg=result.suggested_load_kg,
     )

@@ -110,8 +110,8 @@ async def test_log_preview_and_confirm_saves_workout(async_client, db_session, m
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -145,8 +145,8 @@ async def test_log_cancel_does_not_save(async_client, db_session, monkeypatch):
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -169,14 +169,14 @@ async def test_log_missing_rpe_saves_null(async_client, db_session, monkeypatch)
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
 
     await _send(async_client, user_id, "/log squat 100 kg for 5, 5, 4")
-    assert "RPE" not in sent[-1]
+    assert "RPE not recorded" in sent[-1]
 
     user = await _internal_user(db_session, user_id)
     action = await _pending_action(db_session, user.id)
@@ -197,7 +197,7 @@ async def test_log_ambiguous_exercise_clarifies(async_client, db_session, monkey
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -215,7 +215,7 @@ async def test_log_invalid_input_clarifies(async_client, db_session, monkeypatch
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -233,7 +233,7 @@ async def test_recommend_insufficient_data(async_client, db_session, monkeypatch
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -249,7 +249,7 @@ async def test_recommend_unknown_exercise(async_client, db_session, monkeypatch)
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -283,8 +283,8 @@ async def test_log_multiple_exercises_saves_all_sets(
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -320,7 +320,7 @@ async def test_log_multiple_exercises_partial_failure_is_atomic(
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -342,8 +342,8 @@ async def test_log_edit_weight_then_confirm(async_client, db_session, monkeypatc
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -360,10 +360,11 @@ async def test_log_edit_weight_then_confirm(async_client, db_session, monkeypatc
     assert "Send the new weight" in sent[-1]
 
     await _send(async_client, user_id, "110 kg")
-    assert "110.0 kg" in sent[-1]
+    assert "110 kg" in sent[-1]
     assert "Save this workout?" in sent[-1]
 
-    await _callback(async_client, user_id, f"confirm:{token}")
+    await db_session.refresh(action)
+    await _callback(async_client, user_id, f"confirm:{action.confirmation_token}")
     assert sent[-1].startswith("Workout saved (3 set(s)).")
 
     session = await _session_with_sets(db_session, user.id)
@@ -379,8 +380,8 @@ async def test_log_edit_reps_per_set(async_client, db_session, monkeypatch):
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -392,9 +393,10 @@ async def test_log_edit_reps_per_set(async_client, db_session, monkeypatch):
 
     await _callback(async_client, user_id, f"edit_field:{token}:reps")
     await _send(async_client, user_id, "8, 8, 7")
-    assert "reps 8, 8, 7" in sent[-1]
+    assert "8 reps" in sent[-1] and "7 reps" in sent[-1]
 
-    await _callback(async_client, user_id, f"confirm:{token}")
+    await db_session.refresh(action)
+    await _callback(async_client, user_id, f"confirm:{action.confirmation_token}")
     session = await _session_with_sets(db_session, user.id)
     assert [s.reps for s in _sorted_sets(session)] == [8, 8, 7]
 
@@ -408,8 +410,8 @@ async def test_log_edit_rpe_to_none(async_client, db_session, monkeypatch):
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -421,9 +423,10 @@ async def test_log_edit_rpe_to_none(async_client, db_session, monkeypatch):
 
     await _callback(async_client, user_id, f"edit_field:{token}:rpe")
     await _send(async_client, user_id, "none")
-    assert "RPE" not in sent[-1]
+    assert "RPE not recorded" in sent[-1]
 
-    await _callback(async_client, user_id, f"confirm:{token}")
+    await db_session.refresh(action)
+    await _callback(async_client, user_id, f"confirm:{action.confirmation_token}")
     session = await _session_with_sets(db_session, user.id)
     assert all(s.rpe is None for s in session.sets)
 
@@ -437,8 +440,8 @@ async def test_log_edit_date(async_client, db_session, monkeypatch):
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -451,7 +454,8 @@ async def test_log_edit_date(async_client, db_session, monkeypatch):
     await _callback(async_client, user_id, f"edit_field:{token}:date")
     await _send(async_client, user_id, "2026-08-01")
 
-    await _callback(async_client, user_id, f"confirm:{token}")
+    await db_session.refresh(action)
+    await _callback(async_client, user_id, f"confirm:{action.confirmation_token}")
     session = await _session_with_sets(db_session, user.id)
     assert session.date == date(2026, 8, 1)
 
@@ -465,8 +469,8 @@ async def test_log_edit_invalid_value_keeps_pending(async_client, db_session, mo
     async def fake_answer(callback_query_id, text=None):
         return None
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -480,7 +484,16 @@ async def test_log_edit_invalid_value_keeps_pending(async_client, db_session, mo
     await _send(async_client, user_id, "not a weight")
     assert "Send the new weight" in sent[-1]
 
-    # The original value is preserved; confirming still saves 100 kg.
-    await _callback(async_client, user_id, f"confirm:{token}")
+    # An unfinished edit cannot be confirmed with the previous button.
+    await db_session.refresh(action)
+    await _callback(async_client, user_id, f"confirm:{action.confirmation_token}")
+    assert await _workout_count(db_session, user.id) == 0
+    await db_session.refresh(action)
+    assert action.pending_edit_field == "weight"
+    assert action.status == "pending_confirmation"
+    await _send(async_client, user_id, "100 kg")
+    await db_session.refresh(action)
+    assert action.confirmation_token != token
+    await _callback(async_client, user_id, f"confirm:{action.confirmation_token}")
     session = await _session_with_sets(db_session, user.id)
     assert all(s.weight_kg == 100.0 for s in session.sets)

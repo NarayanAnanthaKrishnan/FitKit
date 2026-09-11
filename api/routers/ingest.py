@@ -1,208 +1,118 @@
-import logging
+"""Health adapters: parse external formats, then call the shared ingestion service."""
+import re
+import hashlib
 from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends
-
-from api.dependencies.health_auth import get_ingest_user
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from api.database import get_db
-from api.models.db import HealthMetric, UserProfile
+from api.dependencies.health_auth import get_ingest_user
+from api.models.db import UserProfile
 from api.schemas import HealthIngestResponse, ShortcutHealthIngest
-
-logger = logging.getLogger(__name__)
+from api.services.ingestion_service import ingest_rows, payload_hash, validate_measurement
 
 router = APIRouter(prefix="/ingest", tags=["ingest"])
-
-METRIC_NAME_MAP = {
-    "heart_rate_variability": "hrv",
-    "resting_heart_rate": "resting_hr",
-    "sleep_analysis": "sleep_hours",
-}
-
-SOURCE = "apple_watch"
+METRIC_NAME_MAP = {"heart_rate_variability": "hrv", "resting_heart_rate": "resting_hr", "sleep_analysis": "sleep_hours"}
+METRIC_UNITS = {"hrv": {"ms"}, "resting_hr": {"bpm", "count/min"}, "sleep_hours": {"hr", "h", "hours"}}
 
 
-def _normalise_metric_name(raw: str) -> str:
-    return "_".join((raw or "").strip().lower().split())
+def _normalise_metric_name(raw):
+    return "_".join(str(raw or "").strip().lower().split())
 
 
-def _parse_timestamp(raw: str) -> datetime:
-    value = (raw or "").strip()
-    if not value:
-        raise ValueError("empty timestamp")
+def _parse_timestamp(raw):
+    if not isinstance(raw, str):
+        raise ValueError("invalid_timestamp")
+    value = raw.strip()
     try:
-        dt = datetime.fromisoformat(value)
+        stamp = datetime.fromisoformat(value)
     except ValueError:
-        dt = datetime.fromisoformat(
-            value.replace(" +", "+").replace(" -", "-").replace(" ", "T", 1)
-        )
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    else:
-        dt = dt.astimezone(timezone.utc)
-    return dt
+        stamp = datetime.fromisoformat(value.replace(" +", "+").replace(" -", "-").replace(" ", "T", 1))
+    # Legacy exporter timestamps without offsets retain the documented UTC interpretation.
+    return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp.astimezone(timezone.utc)
 
 
-_VALUE_KEYS = ("qty", "avg", "Avg", "value")
-
-
-def _entry_value(entry: dict, metric_type: str) -> float | None:
-    if metric_type == "sleep_hours":
-        for key in ("asleep", "sleepDuration", "qty", "avg", "Avg"):
-            value = entry.get(key)
-            if value is not None:
-                return value
-        return None
-    for key in _VALUE_KEYS:
-        if key in entry:
-            return entry.get(key)
-    return None
+def _entry_value(entry, kind):
+    keys = ("asleep", "sleepDuration", "qty", "avg", "Avg") if kind == "sleep_hours" else ("qty", "avg", "Avg", "value")
+    return next((entry[k] for k in keys if entry.get(k) is not None), None)
 
 
 @router.post("/health", response_model=HealthIngestResponse, status_code=201)
-async def ingest_health(
-    payload: dict,
-    db: AsyncSession = Depends(get_db),
-    user: UserProfile = Depends(get_ingest_user),
-):
-    rows_to_insert = []
-    skipped = 0
-    skipped_reasons: list[str] = []
-
+async def ingest_health(payload: dict, db: AsyncSession = Depends(get_db), user: UserProfile = Depends(get_ingest_user),
+                        batch_id: str | None = Header(default=None, alias="X-Ingest-Batch-Id")):
+    try:
+        fingerprint = payload_hash(payload)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="Payload must contain finite JSON values") from None
+    if batch_id is not None and not re.fullmatch(r"[A-Za-z0-9._:-]{1,100}", batch_id):
+        raise HTTPException(status_code=422, detail="Invalid batch ID")
+    rows, skipped = [], []
     data = payload.get("data")
-    metrics = data.get("metrics", []) if isinstance(data, dict) else None
+    metrics = data.get("metrics") if isinstance(data, dict) else None
     if not isinstance(metrics, list):
-        skipped += 1
-        skipped_reasons.append("data.metrics is not a list")
         metrics = []
-
-    metric_names = [
-        _normalise_metric_name(str(m.get("name") or ""))
-        for m in metrics
-        if isinstance(m, dict)
-    ]
-    seen_names = sorted({n for n in metric_names if n})
-    if seen_names:
-        logger.info("Received health metrics: %s", ", ".join(seen_names))
-
-    for metric_obj in metrics:
-        if not isinstance(metric_obj, dict):
-            skipped += 1
-            skipped_reasons.append("non-object metric entry")
+        skipped.append("invalid_metrics_list")
+    if len(metrics) > 100:
+        raise HTTPException(status_code=413, detail="Too many metric groups")
+    for metric in metrics:
+        if not isinstance(metric, dict):
+            skipped.append("invalid_metric_entry")
             continue
-
-        raw_name = _normalise_metric_name(str(metric_obj.get("name") or ""))
-        metric_type = METRIC_NAME_MAP.get(raw_name)
-        if metric_type is None:
-            skipped += 1
-            skipped_reasons.append(f"unmapped metric '{raw_name}'")
+        kind = METRIC_NAME_MAP.get(_normalise_metric_name(metric.get("name")))
+        if kind is None:
+            skipped.append("unmapped_metric")
             continue
-
-        data_entries = metric_obj.get("data", [])
-        if not isinstance(data_entries, list):
-            skipped += 1
-            skipped_reasons.append(f"'{raw_name}' data is not a list")
+        if metric.get("units") is not None and str(metric["units"]).lower() not in METRIC_UNITS[kind]:
+            skipped.append("unsupported_unit")
             continue
-
-        for entry in data_entries:
+        entries = metric.get("data", [])
+        if not isinstance(entries, list):
+            skipped.append("invalid_samples_list")
+            continue
+        if len(entries) > 5000 or len(rows) + len(entries) > 5000:
+            raise HTTPException(status_code=413, detail="Too many samples")
+        for entry in entries:
             if not isinstance(entry, dict):
-                skipped += 1
-                skipped_reasons.append(f"'{raw_name}' non-object entry")
+                skipped.append("invalid_sample")
                 continue
-
-            value = _entry_value(entry, metric_type)
-            if value is None:
-                skipped += 1
-                skipped_reasons.append(
-                    f"'{raw_name}' entry missing qty/Avg (keys: {sorted(entry)})"
-                )
-                continue
-
             try:
-                timestamp = _parse_timestamp(entry.get("date"))
-                value_float = float(value)
-            except (TypeError, ValueError) as exc:
-                skipped += 1
-                skipped_reasons.append(f"'{raw_name}' entry unparseable: {exc}")
+                stamp = _parse_timestamp(entry.get("date"))
+                value = validate_measurement(kind, _entry_value(entry, kind), stamp)
+            except (ValueError, TypeError):
+                skipped.append("invalid_value_or_timestamp")
                 continue
-
-            rows_to_insert.append(
-                {
-                    "user_id": user.id,
-                    "metric_type": metric_type,
-                    "timestamp": timestamp,
-                    "value": value_float,
-                    "source": SOURCE,
-                }
-            )
-
-    inserted = 0
-    if rows_to_insert:
-        stmt = pg_insert(HealthMetric).values(rows_to_insert)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=["user_id", "metric_type", "timestamp", "source"]
-        )
-        result = await db.execute(stmt)
-        inserted = result.rowcount
-
-    for reason in skipped_reasons:
-        logger.warning("Skipped health metric entry: %s", reason)
-
-    return HealthIngestResponse(
-        inserted=inserted,
-        skipped=skipped,
-        skipped_reasons=skipped_reasons,
-    )
+            rows.append({"user_id": user.id, "metric_type": kind, "timestamp": stamp, "value": value, "source": "apple_watch"})
+    key = hashlib.sha256(batch_id.encode()).hexdigest() if batch_id else fingerprint
+    return await ingest_rows(db, user.id, "health:" + key, fingerprint, rows, skipped)
 
 
 @router.post("/shortcut", response_model=HealthIngestResponse, status_code=201)
-async def ingest_health_shortcut(
-    payload: ShortcutHealthIngest,
-    db: AsyncSession = Depends(get_db),
-    user: UserProfile = Depends(get_ingest_user),
-):
-    """First-party Apple Shortcuts bridge (no third-party app, no iOS app).
+async def ingest_health_shortcut(payload: ShortcutHealthIngest, db: AsyncSession = Depends(get_db),
+                                user: UserProfile = Depends(get_ingest_user)):
+    return await _shortcut(db, user, payload)
 
-    Accepts a flat, easy-to-build payload and maps it onto the same idempotent
-    ``health_metrics`` table the Health Auto Export route uses, keyed by the
-    per-user pairing token.
-    """
+
+@router.post("/shortcut/validate")
+async def validate_shortcut(payload: ShortcutHealthIngest, db: AsyncSession = Depends(get_db),
+                            user: UserProfile = Depends(get_ingest_user)):
+    return await _shortcut(db, user, payload, validate_only=True)
+
+
+async def _shortcut(db, user, payload, validate_only=False):
+    if payload.measured_at is None and payload.batch_id is None and not validate_only:
+        raise HTTPException(status_code=422, detail="Provide measured_at or a stable batch_id for safe retries")
     measured_at = payload.measured_at or datetime.now(timezone.utc)
-    if measured_at.tzinfo is None:
-        measured_at = measured_at.replace(tzinfo=timezone.utc)
-    else:
-        measured_at = measured_at.astimezone(timezone.utc)
-
-    fields = (
-        ("hrv", payload.hrv),
-        ("resting_hr", payload.resting_hr),
-        ("sleep_hours", payload.sleep_hours),
-    )
-    rows_to_insert = [
-        {
-            "user_id": user.id,
-            "metric_type": metric_type,
-            "timestamp": measured_at,
-            "value": float(value),
-            "source": "apple_shortcuts",
-        }
-        for metric_type, value in fields
-        if value is not None
-    ]
-
-    inserted = 0
-    if rows_to_insert:
-        stmt = pg_insert(HealthMetric).values(rows_to_insert)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=["user_id", "metric_type", "timestamp", "source"]
-        )
-        result = await db.execute(stmt)
-        inserted = result.rowcount
-
-    return HealthIngestResponse(
-        inserted=inserted,
-        skipped=0,
-        skipped_reasons=[],
-    )
+    rows = []
+    for kind in ("hrv", "resting_hr", "sleep_hours"):
+        value = getattr(payload, kind)
+        if value is None:
+            continue
+        try:
+            value = validate_measurement(kind, value, measured_at)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Measurements require a valid value and a non-future timezone-aware timestamp") from None
+        rows.append({"user_id": user.id, "metric_type": kind, "timestamp": measured_at, "value": value, "source": "apple_shortcuts"})
+    if not rows:
+        raise HTTPException(status_code=422, detail="Provide at least one health metric")
+    fingerprint = payload_hash(payload.model_dump(mode="json", exclude={"batch_id"}))
+    key = hashlib.sha256(payload.batch_id.encode()).hexdigest() if payload.batch_id else fingerprint
+    return await ingest_rows(db, user.id, "shortcut:" + key, fingerprint, rows, [], validate_only=validate_only)

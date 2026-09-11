@@ -1,10 +1,18 @@
 import asyncio
 import logging
 import os
+import math
 
 import httpx
 
 logger = logging.getLogger(__name__)
+from api.config import settings
+
+
+class TelegramDeliveryError(RuntimeError):
+    def __init__(self, code="delivery_failed", retry_after=None):
+        super().__init__("Telegram delivery failed")
+        self.code, self.retry_after = code, retry_after
 
 _TELEGRAM_API = "https://api.telegram.org"
 _MAX_ATTEMPTS = 3
@@ -12,7 +20,7 @@ _BACKOFF_SECONDS = 1.0
 
 
 def _bot_url(method: str) -> str | None:
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    token = settings.telegram_bot_token
     if not token:
         return None
     return f"{_TELEGRAM_API}/bot{token}/{method}"
@@ -26,7 +34,7 @@ async def send_message(
     if url is None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
 
-    payload: dict = {"chat_id": chat_id, "text": text}
+    payload: dict = {"chat_id": chat_id, "text": text, "link_preview_options": {"is_disabled": True}}
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
     await _post_with_retry(url, payload)
@@ -73,10 +81,10 @@ async def _post_with_retry(
 
         last_status = response.status_code
         if response.status_code == 429:
-            if attempt < _MAX_ATTEMPTS - 1:
-                await asyncio.sleep(_retry_after(response))
-                continue
-            break
+            # Reschedule the durable job instead of sleeping while its lease expires.
+            if raise_on_failure:
+                raise TelegramDeliveryError("rate_limited", _retry_after(response))
+            return
         if response.status_code >= 500:
             if attempt < _MAX_ATTEMPTS - 1:
                 await asyncio.sleep(_BACKOFF_SECONDS * (attempt + 1))
@@ -99,11 +107,14 @@ async def _post_with_retry(
     )
     if raise_on_failure:
         # Never include the bot-token URL in the raised error.
-        raise RuntimeError("Telegram delivery failed") from None
+        raise TelegramDeliveryError() from None
 
 
 def _retry_after(response: httpx.Response) -> float:
     try:
-        return float(response.headers.get("Retry-After", _BACKOFF_SECONDS))
-    except (TypeError, ValueError):
+        body = response.json()
+        raw = (body.get("parameters") or {}).get("retry_after", response.headers.get("Retry-After", _BACKOFF_SECONDS))
+        value = float(raw)
+        return value if math.isfinite(value) and 0 <= value <= 86400 else _BACKOFF_SECONDS
+    except (TypeError, ValueError, AttributeError):
         return _BACKOFF_SECONDS

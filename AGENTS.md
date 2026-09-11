@@ -1,6 +1,6 @@
 # FitKit — Telegram Fitness Coach
 
-FitKit is a Telegram-first fitness coaching backend. The current repository contains a tested deterministic rule engine, a user-scoped FastAPI/PostgreSQL API, a private-chat Telegram adapter, and a provider-neutral LLM gateway on Groq `openai/gpt-oss-120b`. The next phase after the LLM pilot adds personalized food/hydration logging and tailored nudges.
+FitKit is a Telegram-first fitness coaching backend. The private-beta milestone has deterministic rules, user-scoped services, durable encrypted Telegram queues and a separate worker, and a Groq gateway on `openai/gpt-oss-120b`. AI needs both global enablement and per-user consent. Profile details and health data are optional. The scope improves existing routines; food/hydration and nudges follow a proven beta. See `docs/private_beta.md` and `docs/operations.md` for current release gates.
 
 ## Core design principles
 
@@ -95,9 +95,9 @@ Mutating operations should be auditable. Store the interpreted action, validatio
 - Preserve weight measurements as history; do not overwrite the only record in `UserProfile`.
 - Keep health metrics linked to the correct internal user and source.
 - Use idempotency keys for Telegram updates and health-ingest batches.
-- Dashboard links must be opaque, short-lived, user-scoped, and revocable.
+- Dashboard links must be opaque, short-lived, user-scoped, and revocable. Keep query strings out of logs and apply no-store/no-referrer headers to error responses too.
 - Do not put raw health data, bot tokens, or internal identifiers in URLs.
-- Introduce a migration tool before production schema evolution; `create_all` is currently only the local bootstrap and migrations are not yet installed.
+- Apply Alembic migrations explicitly before API/worker startup. Current head is `20260911_0014`; startup only seeds the packaged taxonomy. Never stamp an unverified legacy schema.
 - Keep exercise names in the canonical taxonomy. Parsers normalize into taxonomy names; they do not create arbitrary exercise records.
 - Missing RPE remains missing; do not default it for recommendation decisions.
 - Never log `GROQ_API_KEY`, bot tokens, webhook secrets, or raw health payloads; LLM metrics are redacted (model, latency, token counts only).
@@ -133,7 +133,7 @@ New Telegram work must include tests for:
 
 1. Replace legacy implicit single-user behavior with explicit authenticated ownership; Telegram profiles are currently excluded from legacy lookups as a temporary boundary.
 2. Harden Telegram identity concurrency, outbound delivery, and webhook retry semantics.
-3. Add goals, conversations, and agent-action audit records; initial weight measurements already exist.
+3. Add goals, short-lived encrypted conversation context, and agent-action audit records (current); long-term conversation archives remain out of scope.
 4. Build a minimal Telegram vertical slice: `/start`, weight logging, `/today`, `/progress`.
 5. Add workout parsing and validated logging using the existing taxonomy and engine.
 6. Build a private dashboard and secure Telegram links.

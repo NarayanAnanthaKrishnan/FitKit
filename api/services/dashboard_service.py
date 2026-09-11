@@ -9,16 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.db import DashboardLink, UserProfile
 from api.services.health_pairing_service import generate_token, hash_token
+from api.config import settings
 
 DEFAULT_TTL_SECONDS = 900  # 15 minutes
 
 
 def _ttl_seconds() -> int:
-    raw = os.getenv("DASHBOARD_LINK_TTL_SECONDS")
-    try:
-        return int(raw) if raw else DEFAULT_TTL_SECONDS
-    except ValueError:
-        return DEFAULT_TTL_SECONDS
+    return settings.dashboard_link_ttl_seconds
 
 
 async def create_link(

@@ -1,0 +1,15 @@
+{"text":"bench 3x8 at 80 kg","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":null,"sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":80,"rpe":null}]}},"accepted":true}
+{"text":"bench 3x8 at 80 kg","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":null,"sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":80,"rpe":8}]}},"accepted":false}
+{"text":"bench 3x8 at 80 kg rpe 7","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":null,"sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":80,"rpe":null}]}},"accepted":false}
+{"text":"bench 3x8 at 80 kg; squat 3x5 at 100 kg","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":null,"sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":100,"rpe":null},{"exercise_query":"squat","sets":3,"reps":5,"weight_kg":80,"rpe":null}]}},"accepted":false}
+{"text":"bench 3x8 at 80 kg yesterday","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":"2026-09-08","sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":80,"rpe":null}]}},"accepted":false}
+{"text":"bench 3x8 at 80 kg yesterday","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":"2026-09-07","sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":80,"rpe":null}]}},"accepted":true}
+{"text":"bench 3x8 at 80 kg last Monday","candidate":{"intent":"log_workout","confidence":0.99,"payload":{"date":null,"sets":[{"exercise_query":"bench","sets":3,"reps":8,"weight_kg":80,"rpe":null}]}},"accepted":false}
+{"text":"my weight is 80","candidate":{"intent":"record_weight","confidence":0.99,"payload":{"weight_kg":80}},"accepted":false}
+{"text":"my weight is 80 kg","candidate":{"intent":"record_weight","confidence":0.99,"payload":{"weight_kg":80}},"accepted":true}
+{"text":"my weight was 80 kg yesterday","candidate":{"intent":"record_weight","confidence":0.99,"payload":{"weight_kg":80}},"accepted":false}
+{"text":"my weight is 80 kg","candidate":{"intent":"record_weight","confidence":0.3,"payload":{"weight_kg":80}},"accepted":false}
+{"text":"goal 3.5 times per week","candidate":{"intent":"create_goal","confidence":0.99,"payload":{"goal_type":"frequency","target_value":3.5,"unit":"per_week"}},"accepted":false}
+{"text":"goal weight 176 lb","candidate":{"intent":"create_goal","confidence":0.99,"payload":{"goal_type":"weight","target_value":176,"unit":"kg"}},"accepted":false}
+{"text":"resting HR 58","candidate":{"intent":"update_profile","confidence":0.99,"payload":{"field":"age","value":"58"}},"accepted":false}
+{"text":"delete my account immediately","candidate":{"intent":"delete_user","confidence":1,"payload":{}},"accepted":false}

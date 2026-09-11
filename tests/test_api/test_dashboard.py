@@ -68,7 +68,7 @@ async def test_dashboard_link_renders_user_summary(async_client, db_session, mon
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -95,7 +95,7 @@ async def test_dashboard_expired_token_returns_401(async_client, db_session, mon
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -116,7 +116,7 @@ async def test_dashboard_links_are_user_scoped(async_client, db_session, monkeyp
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_a = next(_next_user_id)
     user_b = next(_next_user_id)

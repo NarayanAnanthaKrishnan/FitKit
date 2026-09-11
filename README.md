@@ -1,262 +1,126 @@
 # FitKit — Telegram Fitness Coach
 
-FitKit is a fitness-coaching backend designed to support a conversational Telegram agent. Users will be able to log workouts, record progress, ask for health and training summaries, receive deterministic recommendations, and open a private insights dashboard.
+FitKit helps people log and improve an existing training routine. Deterministic Python rules decide progression; optional Groq interpretation turns free text into validated previews. Profile details and connected health data are optional.
 
-The existing rule engine remains the product's decision-making core. A language model interprets messy free-text messages and phrases responses on Groq `openai/gpt-oss-120b`, but it never replaces validated fitness rules — every LLM candidate is Pydantic-validated and requires a Save/Cancel preview.
+The private-beta implementation includes:
 
-## Product direction
-
-```text
-Telegram chat
-    -> Telegram Bot API
-    -> FastAPI webhook and conversation layer
-    -> validated domain services
-    -> PostgreSQL + deterministic rule engine
-    -> Telegram replies and private dashboard links
-```
-
-Telegram is the primary interaction channel. A web dashboard is for charts and deeper insights, not for replacing the chat experience.
-
-## Current implementation
-
-The repository currently contains the backend foundation:
-
-- `engine/` — framework-independent fitness calculations and recommendations
-- `api/` — FastAPI REST API, SQLAlchemy models, health ingestion, and database services
-- `tests/` — engine unit tests and API integration tests
-- `docs/exercise_taxonomy.csv` — canonical exercise vocabulary
-- `scripts/fetch_wger.py` — optional taxonomy generation helper
-
-Implemented capabilities include:
-
-- Epley estimated 1RM
-- Progressive overload decisions using the primary set
-- Acute:chronic workload ratio calculations
-- HRV and sleep recovery gates
-- Daily training-volume aggregation
-- Workout session CRUD
-- User-scoped Apple Health ingestion through the first-party Apple Shortcuts bridge
-- Optional legacy Health Auto Export ingestion during migration
-- Health summaries and exercise recommendations
-- Idempotent health-metric insertion
-- Copy-ready Shortcut recipe in `docs/apple_shortcuts.md`
-- Provider-neutral LLM gateway on Groq `openai/gpt-oss-120b` — bounded intent + structured extraction for free-text Telegram messages with confidence-gated previews
-- Synthetic eval set in `tests/eval/cases.jsonl` + benchmark harness `scripts/eval_groq.py`
-
-Telegram is now full-slice with optional LLM: secret-protected webhook, Telegram identity mapping, update-idempotency, `/start`, `/help`, `/delete` with `DELETE` confirmation, `/cancel`, weight capture with Save/Cancel preview, `/log` with preview + inline Edit, `/profile`, `/goals`, `/today`, `/progress`, `/health`, `/connect-health`, `/dashboard`, and `/recommend`. Free-text like `my weight is 82 kg` or `bench 3x8 at 80 kg rpe 8` is routed through the Groq gateway only when `LLM_ENABLED=1`; low-confidence or invalid output asks clarification, and every write still requires confirmation. Telegram processing is private-chat only. The structured REST routes require `X-API-Key` + `X-Telegram-User-Id` resolving a linked Telegram identity — internal bridge only, not public auth.
-
-## Telegram and health-data boundaries
-
-A Telegram bot cannot directly read Apple Health or Apple Watch data and cannot display the iOS HealthKit permission prompt. Telegram provides the conversation interface, while health data must arrive through a separate authorized source.
-
-### Production bridge without a third-party exporter or FitKit iOS app
-
-Apple Health cannot be read from a server, and Telegram cannot grant HealthKit permissions. The supported no-app path is the first-party Shortcuts bridge:
+- Private-chat Telegram identity, a production invitation allowlist, and user-scoped services.
+- Durable encrypted inbound and outbound jobs, per-user ordering, leases, retry limits, and replay protection.
+- Exact confirmation, expiring previews, per-set editing, revision-checked workout corrections, and confirmed account deletion.
+- Optional profile setup; timezone, kg/lb display, and separate per-user AI consent in `/preferences`.
+- Exercise-specific rep targets and optional load increments in `/target`. Recommendations report missing inputs and use one path with or without health data.
+- Weight history, weekly goals, exercise progress, recovery provenance, and private expiring dashboard links.
+- User-paired health ingestion with stable batch IDs, duplicate reporting, and a validation-only endpoint.
+- Alembic migrations, a non-root Docker image, separate worker, TLS proxy configuration, local operator metrics, and encrypted backup tooling.
+- A feature-gated natural-first Telegram router for common requests, focused follow-ups, flexible pending previews, metadata-only interaction quality metrics, and explicitly consented 30-day feedback samples.
 
 ```text
-Apple Health / Watch
-    -> Apple Shortcuts personal automation
-    -> POST /ingest/shortcut with a per-user pairing token
-    -> health_metrics
-    -> Telegram summaries and recommendations
+Telegram -> verified webhook -> durable receipt -> worker
+             -> validated domain services -> PostgreSQL + engine
+             -> durable outbound job -> Telegram
 ```
 
-Users run `/connect-health` in Telegram, copy their private endpoint and token into the Shortcut, and configure a daily personal automation. The complete recipe is in [`docs/apple_shortcuts.md`](docs/apple_shortcuts.md).
+## Local development quick start
 
-This is a daily best-effort sync, not an always-on stream. Apple may require the phone to be unlocked, and Health/Shortcuts availability varies by iOS version. The older third-party Health Auto Export route is disabled by default and can be enabled during rollout with `ALLOW_LEGACY_INGEST_AUTH=1`.
+These commands assume Windows PowerShell, Python 3.12, Docker Desktop, and Git Bash are installed. From the repository root, create the environment once:
 
-## Telegram bot setup
-
-The bot will be created through Telegram's `@BotFather`. BotFather provides a secret bot token used by the backend to call the Telegram Bot API.
-
-Store secrets in the local environment only. Start from the safe template:
-
-```bash
-cp .env.example .env
-```
-
-Then replace every placeholder in `.env` with local values. Minimum for the full stack:
-
-| Variable | Required for | Notes |
-|---|---|---|
-| `DATABASE_URL` | always | `postgresql+asyncpg://postgres:fitkit@localhost:5432/fitkit` for local dev |
-| `FITKIT_API_KEY` | REST bridge | internal key for `X-API-Key` |
-| `TELEGRAM_BOT_TOKEN` | Telegram | from `@BotFather`, never commit |
-| `TELEGRAM_WEBHOOK_SECRET` | Telegram | long random string, sent as `secret_token` on webhook registration |
-| `PUBLIC_BASE_URL` | health + dashboard links | e.g. `http://localhost:8000` locally, `https://fitkit.example.com` in staging |
-| `GROQ_API_KEY` | LLM | Groq console key for `openai/gpt-oss-120b`; omit or set `LLM_ENABLED=0` to run without LLM |
-| `GROQ_MODEL` | LLM | `openai/gpt-oss-120b` (default); override only for experiments |
-| `LLM_ENABLED` | LLM | `1` to enable free-text gateway, `0` to disable (fallback to deterministic commands) |
-
-Never commit `.env`, the bot token, webhook secret, `GROQ_API_KEY`, API keys, database credentials, or health data. If a credential is exposed, rotate it immediately; deleting the file is not enough.
-
-The Telegram numeric `user_id` is the stable external identity used to link a Telegram account to an internal FitKit user profile; usernames are only display metadata.
-
-> **LLM off by default:** If `GROQ_API_KEY` is missing or `LLM_ENABLED=0`, the gateway falls back to deterministic commands (`/start`, `/log`, bare weight like `80 kg`) and asks `Send /help` for unrecognized free text. No Groq call is made and no tests require a live key.
-
-## Current API endpoints
-
-| Method | Endpoint | Purpose | Current status |
-|---|---|---|---|
-| `GET` | `/health` | Liveness check | Implemented |
-| `POST` | `/ingest/shortcut` | First-party Apple Shortcuts health payload | Implemented; per-user pairing token required |
-| `POST` | `/ingest/health` | Legacy Health Auto Export payload | Implemented; disableable rollout compatibility path |
-| `GET` | `/health/summary` | HRV, sleep, and resting-HR summary | Implemented; user-scoped through linked Telegram identity |
-| `POST` | `/workouts` | Structured workout logging | Implemented; user-scoped through linked Telegram identity |
-| `GET` | `/workouts/{exercise}/history` | Exercise history | Implemented; user-scoped through linked Telegram identity |
-| `GET` | `/workouts/{workout_id}` | Workout lookup | Implemented; user-scoped through linked Telegram identity |
-| `GET` | `/recommend/{exercise}` | Rule-based recommendation | Implemented; user-scoped through linked Telegram identity |
-| `POST` | `/integrations/telegram/webhook` | Telegram updates, `/start`, `/help`, `/delete`, `/cancel`, and weight onboarding | Implemented; private chats only; requires webhook secret and bot-token configuration |
-
-## Quickstart
-
-Requires Python 3.12 and PostgreSQL. Docker is convenient for local development. Groq access is optional — see LLM rows in the table above.
-
-### 1. Configure the environment
-
-```bash
-cp .env.example .env
-# Edit .env and replace every placeholder.
-# For Telegram + LLM locally:
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET from @BotFather
-#   PUBLIC_BASE_URL=http://localhost:8000 (or your tunnel host in staging)
-#   GROQ_API_KEY from https://console.groq.com (leave unset + LLM_ENABLED=0 to run without LLM)
-```
-
-### 2. Create the virtual environment
-
-Run these commands manually from the repository root:
-
-```bash
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 python -m venv .venv
-source .venv/Scripts/activate  # Windows Git Bash
-# source .venv/bin/activate    # Linux/macOS
-
-python -m pip install --upgrade pip
-python -m pip install -c constraints.txt -e ".[dev]"
+.venv\Scripts\python.exe -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-### 3. Start PostgreSQL and migrate
+Fill in the development values in `.env`. Keep `FITKIT_PRODUCTION=0`; set `TELEGRAM_CONVERSATION_V2=1` to exercise natural conversation. Leave `LLM_ENABLED=0` for deterministic-only development, or provide `GROQ_API_KEY`, set `LLM_ENABLED=1`, and enable AI explicitly in the bot.
 
-One idempotent command starts Docker Desktop if needed, ensures the `fitkit-postgres` container is running, creates the `fitkit` and `fitkit_test` databases, and migrates to head:
+Start the local database and apply migrations:
 
-```bash
+```powershell
 bash scripts/devdb.sh
+.venv\Scripts\python.exe -m alembic check
 ```
 
-Manual equivalent (Linux/macOS or if the script is unavailable):
+Start the API in one terminal:
 
-```bash
-docker run -d --name fitkit-postgres -e POSTGRES_PASSWORD=fitkit -p 5432:5432 postgres:16
-until docker exec fitkit-postgres pg_isready -U postgres; do sleep 1; done
-docker exec fitkit-postgres createdb -U postgres fitkit
-docker exec fitkit-postgres createdb -U postgres fitkit_test
-python -m alembic upgrade head
+```powershell
+.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log
 ```
 
-For a pre-existing local database that predates Alembic, back up first then:
+Start the Telegram worker in a second terminal:
 
-```bash
-python scripts/bootstrap_legacy_db.py --apply
+```powershell
+.venv\Scripts\python.exe -m api.worker
 ```
 
-### 4. Run the API
+For a local debugging session, capture the already-redacted application logs in ignored artifact files:
 
-From the active virtual environment, with PostgreSQL running:
-
-```bash
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```powershell
+.venv\Scripts\python.exe -m uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log 2>&1 | Tee-Object -FilePath artifacts\api.log
+.venv\Scripts\python.exe -m api.worker 2>&1 | Tee-Object -FilePath artifacts\worker.log
 ```
 
-- The API is available at `http://localhost:8000`; liveness check is `GET /health`.
-- Structured REST requests must include both `X-API-Key` and `X-Telegram-User-Id` for an already-linked Telegram account; Telegram webhook calls use the separate `X-Telegram-Bot-Api-Secret-Token` header.
-- With `LLM_ENABLED=1` and a valid `GROQ_API_KEY`, free-text like `my weight is 82 kg` is interpreted via Groq `openai/gpt-oss-120b` into a preview; with `LLM_ENABLED=0` the same input falls back to `Send /help`.
-- Keep the backend terminal open and stop it with `Ctrl+C`.
+Run those commands in separate terminals. FitKit logs error codes and aggregate metrics, not Telegram messages, health payloads, tokens, or conversation contents.
 
-### 5. Run tests
+Check the processes from another terminal:
 
-From another terminal after activating `.venv` there as well:
-
-```bash
-# All tests (mocked LLM — no Groq key or network needed):
-python -m pytest tests/ -v
-# Or by suite:
-python -m pytest tests/test_engine -v
-python -m pytest tests/test_api -v
-# Optional: real Groq benchmark (requires GROQ_API_KEY; synthetic data only):
-python scripts/eval_groq.py --model openai/gpt-oss-120b
-# Offline eval (no Groq key):
-python scripts/eval_groq.py --mock
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/ready
 ```
 
-The application seeds the static exercise taxonomy at startup, but it no longer creates or alters database tables implicitly. Apply migrations explicitly before starting the backend. If `fitkit_test` already exists, the one-time `createdb` command can be skipped.
+### Ngrok tunnel for Telegram
 
-### 6. Expose Telegram locally (optional)
+With the API and worker running, start ngrok in another terminal:
 
-For Telegram, the bot needs a public HTTPS URL. Use Cloudflare Tunnel or ngrok:
-
-```bash
-# Example with Cloudflare Tunnel (install cloudflared first):
-cloudflared tunnel --url http://localhost:8000
-# or: ngrok http 8000
+```powershell
+ngrok config add-authtoken $env:NGROK_AUTHTOKEN
+ngrok http 8000
 ```
 
-Then register the development bot webhook (replace `TUNNEL_HOST`):
-
-```bash
-curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://TUNNEL_HOST/integrations/telegram/webhook","secret_token":"'"$TELEGRAM_WEBHOOK_SECRET"'","max_connections":40}'
-# Verify:
-curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo"
-curl http://localhost:8000/health
-```
-
-When the tunnel URL changes, re-register the webhook and verify `/health` before testing `/start` in Telegram. Keep webhook URLs that contain bot tokens out of logs.
-
-### Alembic and Mako files
-
-Alembic is the versioned database-schema tool. Keep `alembic.ini`, `alembic/env.py`, the migration files under `alembic/versions/`, and `alembic/script.py.mako` in source control. The first three configure/run/apply migrations; `script.py.mako` is the template used when generating a future revision. Mako itself is only a Python dependency installed into `.venv` for Alembic's template rendering. Do not commit `.venv`, `__pycache__`, or generated Mako/package files.
-
-## Repository layout
+Copy the HTTPS forwarding origin shown by ngrok, without a trailing slash, into `.env` as `PUBLIC_BASE_URL`. Restart the API and worker after changing `.env`. Register this webhook URL with Telegram:
 
 ```text
-api/
-  dependencies/       Authentication helpers
-  llm/                Provider-neutral Groq gateway (gpt-oss-120b) + schemas
-  models/             SQLAlchemy models
-  routers/            REST routes
-  services/           Shared domain/query services
-engine/               Deterministic fitness rule engine
-docs/
-  apple_shortcuts.md  Copy-ready Shortcuts recipe
-  data_schema.md      Current schema and planned personalization tables
-  development.md      Local setup and Telegram/LLM testing
-  exercise_taxonomy.csv
-scripts/
-  devdb.sh            Idempotent PostgreSQL + migration bootstrap
-  eval_groq.py        Groq benchmark harness for tests/eval
-  fetch_wger.py       Exercise taxonomy helper
-tests/
-  eval/cases.jsonl    Synthetic LLM eval set (versioned)
-  test_engine/        Rule-engine unit tests
-  test_api/           API integration tests (mocked LLM in normal CI)
+https://<your-ngrok-host>/integrations/telegram/webhook
 ```
 
-Generated logs, caches, environment files, and package metadata are local artifacts and are ignored by `.gitignore`. The existing `uvicorn_out.log` and `uvicorn_err.log` files are locked by the local execution environment and remain temporarily; they are not application source and should be removed when no process holds them.
+Use the same `TELEGRAM_WEBHOOK_SECRET` value when registering Telegram's `secret_token`. Keep `TELEGRAM_BOT_TOKEN` in environment variables and out of pasted URLs, shell history, screenshots, and logs. If the ngrok hostname changes, update `PUBLIC_BASE_URL`, restart the processes, and register the new webhook URL.
 
-For local operations, start PostgreSQL before the API and inspect the Uvicorn logs when available. Before relying on production health data, send one real Health Auto Export payload and verify the metric names and skipped-entry count.
+### Local tests
 
-## Roadmap
+The API tests require the dedicated database created by `scripts/devdb.sh`; the database name must end in `_test`.
 
-1. **Multi-user foundation** — replace legacy first-user lookups with explicit ownership and migrations
-2. **Telegram vertical slice expansion** — profile, goals, inline confirmations, and robust outbound delivery
-3. **Progress tracking** — broader weight history, goals, and weekly summaries
-4. **Workout conversation** — validated natural-language parsing and workout logging
-5. **Private dashboard** — expiring links and user-scoped charts
-6. **Health connection** — user-aware Health Auto Export, then a native HealthKit companion
-7. **Agent orchestration** — strict tools, confirmations, audit history, and evaluation (Groq `openai/gpt-oss-20b` + `openai/gpt-oss-120b` pilot via provider-neutral gateway)
-8. **Optional reminders** — opt-in check-ins and weekly reports
-9. **Personalized coaching (post-LLM) — per-user food/water logging and tailored nudges, deterministic targets in `engine/`, Groq-phrased
+```powershell
+$env:TEST_DATABASE_URL = 'postgresql+asyncpg://postgres:fitkit@127.0.0.1:5432/fitkit_beta_test'
+.venv\Scripts\python.exe -m pytest tests/test_engine tests/test_unit -q
+.venv\Scripts\python.exe -m pytest tests/test_api -q
+.venv\Scripts\python.exe -m pytest tests/ -q
+.venv\Scripts\python.exe scripts/eval_groq.py --offline
+.venv\Scripts\python.exe -m compileall -q api engine tests
+.venv\Scripts\python.exe scripts/check_secrets.py
+```
 
-See `fitness-agent-implementation-plan.md` for the detailed plan and acceptance criteria. See `docs/data_schema.md` before changing persistence models.
+The tests apply migrations and truncate the dedicated test database. Never point `TEST_DATABASE_URL` at the local application or production database.
+
+Useful commands:
+
+With `TELEGRAM_CONVERSATION_V2=1`, common requests work naturally: “I did squat 3x5 at 100 kg”, “How am I doing?”, “It’s leg day—planning”, “What do you remember about me?”, or “Set my target for squat to 5 reps increment 2.5 kg”. Planning is grounded in confirmed goals and recent workout names; numeric recommendations still come only from deterministic services. Slash commands remain reliable shortcuts and recovery controls.
+
+| Command | Purpose |
+|---|---|
+| `/start`, `/skip`, `/help` | Optional setup and help |
+| `80 kg` | Preview a current weight measurement |
+| `/log squat 3x5 at 100 kg rpe 7` | Preview a workout; date defaults visibly to the user's local day |
+| `/target squat 5 reps increment 2.5 kg` | Set a progression target and optional equipment increment |
+| `/recommend squat` | Check deterministic progression |
+| `/correct <workout ID>` | Preview and edit a saved workout |
+| `/profile`, `/goals`, `/today`, `/progress`, `/health` | View or update fitness details |
+| `/preferences` | Timezone, units, and optional AI interpretation |
+| `/connect-health`, `/dashboard` | Private health pairing and temporary dashboard |
+| `/cancel`, `/delete` | Cancel a preview or begin confirmed deletion |
+
+Start with [local development](docs/development.md). For hosting, read the [operations runbook](docs/operations.md). The [implementation and rollout plan](docs/private_beta.md) records the release gates and subsequent scope. The [schema guide](docs/data_schema.md) and [Shortcuts contract](docs/apple_shortcuts.md) document persistence and ingestion.
+
+`LLM_ENABLED=1` makes AI available; each user must still explicitly enable it. Provider calls send only the current message and minimal setup context. Every interpreted mutation requires a preview. `LLM_ENABLED=0` disables the provider globally. The model never supplies progression rules or missing measurements.
+
+Run `python -m pytest tests/ -q` against a dedicated PostgreSQL database ending in `_test`. Engine and unit tests can run separately without PostgreSQL. `python scripts/eval_groq.py --offline` checks deterministic routing and adversarial extraction boundaries without calling Groq.
+
+The repository is prepared for private-beta validation. A real phone sync, live synthetic Groq benchmark, deployment credentials/certificates, and seven days of beta observation remain operational release gates. Full program generation, nutrition/hydration, nudges, voice, and a native iOS companion are later work.

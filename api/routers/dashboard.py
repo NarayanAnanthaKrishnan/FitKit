@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db
 from api.services.dashboard_service import resolve_user_by_token
 from api.services.summary_service import health_snapshot, progress_summary, today_snapshot
+from api.services.units import display_load
 
 router = APIRouter(tags=["dashboard"])
 
@@ -42,6 +43,7 @@ async def dashboard(token: str, db: AsyncSession = Depends(get_db)):
     health = await health_snapshot(db, user.id)
 
     return HTMLResponse(
+        headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"},
         content=(
             "<!doctype html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width, initial-scale=1'>"
@@ -59,19 +61,20 @@ async def dashboard(token: str, db: AsyncSession = Depends(get_db)):
 
 def _weight_section(weight: dict) -> str:
     latest = weight.get("latest_kg")
+    unit = weight.get("units", "kg")
     if latest is None:
         body = "<div class='muted'>No weight measurements yet.</div>"
     else:
-        row = f"<div class='row'><span>Latest</span><span>{latest:.1f} kg</span></div>"
+        row = f"<div class='row'><span>Latest</span><span>{display_load(latest, unit):.1f} {unit}</span></div>"
         if weight.get("change_7d") is not None:
             row += (
                 f"<div class='row'><span>7-day change</span>"
-                f"<span>{weight['change_7d']:+.1f} kg</span></div>"
+                f"<span>{display_load(weight['change_7d'], unit):+.1f} {unit}</span></div>"
             )
         if weight.get("change_30d") is not None:
             row += (
                 f"<div class='row'><span>30-day change</span>"
-                f"<span>{weight['change_30d']:+.1f} kg</span></div>"
+                f"<span>{display_load(weight['change_30d'], unit):+.1f} {unit}</span></div>"
             )
         body = row
     return f"<section><h2>Weight</h2>{body}</section>"

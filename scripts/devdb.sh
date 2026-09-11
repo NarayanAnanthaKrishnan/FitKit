@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINER="fitkit-postgres"
 POSTGRES_PASSWORD="fitkit"
 APP_DB="fitkit"
-TEST_DB="fitkit_test"
+TEST_DB="fitkit_beta_test"
 # The base Alembic revision is stable; Alembic resolves HEAD dynamically.
 BASE_REVISION="20260812_0001"
 
@@ -32,7 +32,7 @@ ensure_docker() {
   echo "Docker engine is not running; starting Docker Desktop..."
   local exe="/c/Program Files/Docker/Docker/Docker Desktop.exe"
   if [ -f "$exe" ]; then
-    cmd //c start "" "C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe"
+    powershell.exe -NoProfile -WindowStyle Hidden -Command 'Start-Process -FilePath "C:\Program Files\Docker\Docker\Docker Desktop.exe" -WindowStyle Hidden'
   fi
   for _ in $(seq 1 60); do
     if docker info >/dev/null 2>&1; then
@@ -55,7 +55,7 @@ ensure_container() {
     echo "Creating container $CONTAINER..."
     docker run -d --name "$CONTAINER" \
       -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-      -p 5432:5432 postgres:16 >/dev/null
+      -p 127.0.0.1:5432:5432 postgres:16 >/dev/null
   fi
 }
 
@@ -89,19 +89,19 @@ migrate() {
 
   if [ -n "$has_version" ]; then
     echo "Applying migrations..."
-    (cd "$ROOT" && "$PY" -m alembic upgrade head)
+    (cd "$ROOT" && DATABASE_URL="postgresql+asyncpg://postgres:fitkit@127.0.0.1:5432/$db" "$PY" -m alembic upgrade head)
     return
   fi
 
   has_schema="$(docker exec "$CONTAINER" psql -U postgres -d "$db" -tAc \
     "SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='user_profiles'")"
   if [ -n "$has_schema" ]; then
-    echo "Legacy schema found; stamping base revision before migrating..."
-    (cd "$ROOT" && "$PY" -m alembic stamp "$BASE_REVISION")
+    echo "Unversioned schema found. Back up and validate a dedicated migration before stamping; no schema was changed." >&2
+    return 1
   fi
 
   echo "Applying migrations..."
-  (cd "$ROOT" && "$PY" -m alembic upgrade head)
+  (cd "$ROOT" && DATABASE_URL="postgresql+asyncpg://postgres:fitkit@127.0.0.1:5432/$db" "$PY" -m alembic upgrade head)
 }
 
 ensure_docker

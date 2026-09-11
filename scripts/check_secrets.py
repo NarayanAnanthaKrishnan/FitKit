@@ -16,6 +16,7 @@ from pathlib import Path
 TELEGRAM_TOKEN = re.compile(r"\b\d{8,}:[A-Za-z0-9_-]{20,}\b")
 PRIVATE_KEY = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
 AWS_ACCESS_KEY = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
+GROQ_KEY = re.compile(r"\bgsk_[A-Za-z0-9]{20,}\b")
 GENERIC_SECRET_ASSIGNMENT = re.compile(
     r"(?:TELEGRAM_WEBHOOK_SECRET|FITKIT_API_KEY)\s*=\s*([^\s#]+)"
 )
@@ -23,8 +24,8 @@ PLACEHOLDER_VALUES = {"...", "<local-api-key>", "<long-random-webhook-secret>"}
 
 
 def tracked_files() -> list[Path]:
-    output = subprocess.check_output(["git", "ls-files"], text=True)
-    return [Path(line) for line in output.splitlines() if line]
+    output = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], text=True)
+    return [Path(path) for path in output.split("\0") if path]
 
 
 def _scan_content(path: str, content: str) -> list[str]:
@@ -33,6 +34,7 @@ def _scan_content(path: str, content: str) -> list[str]:
         (TELEGRAM_TOKEN, "Telegram bot token"),
         (PRIVATE_KEY, "private key"),
         (AWS_ACCESS_KEY, "AWS access key"),
+        (GROQ_KEY, "Groq API key"),
     ):
         if pattern.search(content):
             findings.append(f"{path}: possible {label}")

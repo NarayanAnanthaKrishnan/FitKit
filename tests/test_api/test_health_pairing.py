@@ -106,7 +106,7 @@ async def test_connect_health_and_ingest_with_token(
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -143,7 +143,7 @@ async def test_invalid_pairing_token_returns_401(async_client, db_session, monke
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -163,7 +163,7 @@ async def test_rotating_token_revokes_previous(async_client, db_session, monkeyp
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -203,7 +203,7 @@ async def test_pairing_token_is_user_scoped(async_client, db_session, monkeypatc
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_a = next(_next_user_id)
     user_b = next(_next_user_id)
@@ -234,7 +234,7 @@ async def _connect_and_token(async_client, db_session, monkeypatch, user_id):
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
     await _onboard(async_client, user_id)
     await _send(async_client, user_id, "/connect-health")
     return _token_from(sent[-1])
@@ -247,7 +247,7 @@ async def test_shortcut_ingest_flat_payload(async_client, db_session, monkeypatc
 
     resp = await async_client.post(
         "/ingest/shortcut",
-        json={"hrv": 58.2, "resting_hr": 54, "sleep_hours": 6.8},
+        json={"batch_id": "daily-test-1", "hrv": 58.2, "resting_hr": 54, "sleep_hours": 6.8},
         headers={"X-Health-Pairing-Token": token},
     )
     assert resp.status_code == 201

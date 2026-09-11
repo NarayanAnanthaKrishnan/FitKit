@@ -54,13 +54,17 @@ async def test_retries_then_succeeds_after_429(monkeypatch):
     client = _install(
         monkeypatch,
         [
-            _FakeResponse(429, {"ok": False}, headers={"Retry-After": "0"}),
+            _FakeResponse(429, {"ok": False, "parameters": {"retry_after": 17}}, headers={"Retry-After": "0"}),
             _FakeResponse(200, {"ok": True}),
         ],
     )
 
+    with pytest.raises(telegram_client.TelegramDeliveryError) as raised:
+        await telegram_client.send_message(123, "hi")
+    assert raised.value.retry_after == 17
+    assert client.calls == 1
+    # The worker reschedules the job; the client does not sleep through its lease.
     await telegram_client.send_message(123, "hi")
-
     assert client.calls == 2
 
 

@@ -7,3 +7,9 @@ venv/
 .env
 uvicorn_out.log
 uvicorn_err.log
+artifacts/
+local-certs/
+*.fernet
+
+# Keep the landing page local until the backend is committed.
+/ui/

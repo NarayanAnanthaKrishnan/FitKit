@@ -100,7 +100,7 @@ async def test_profile_set_confirm_applies_change(async_client, db_session, monk
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append((chat_id, text, reply_markup))
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -132,7 +132,7 @@ async def test_profile_set_cancel_does_not_apply(async_client, db_session, monke
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -158,7 +158,7 @@ async def test_profile_set_invalid_input_clarifies(async_client, db_session, mon
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -183,7 +183,7 @@ async def test_goal_add_confirm_and_list(async_client, db_session, monkeypatch):
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -214,7 +214,7 @@ async def test_goal_frequency_confirm(async_client, db_session, monkeypatch):
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -241,7 +241,7 @@ async def test_goal_complete_and_remove(async_client, db_session, monkeypatch):
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -281,7 +281,7 @@ async def test_goal_invalid_input_clarifies(async_client, db_session, monkeypatc
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -307,7 +307,7 @@ async def test_summaries_report_insufficient_data(async_client, db_session, monk
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append(text)
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)
@@ -331,7 +331,7 @@ async def test_two_user_goal_isolation(async_client, db_session, monkeypatch):
     async def fake_send(chat_id, text, reply_markup=None):
         sent.append((chat_id, text))
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
 
     user_a = next(_next_user_id)
     user_b = next(_next_user_id)
@@ -360,8 +360,8 @@ async def test_confirm_token_is_user_scoped(async_client, db_session, monkeypatc
     async def fake_answer(callback_query_id, text=None):
         answered.append(text or "")
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_a = next(_next_user_id)
     user_b = next(_next_user_id)
@@ -393,8 +393,8 @@ async def test_duplicate_confirm_does_not_double_write(async_client, db_session,
     async def fake_answer(callback_query_id, text=None):
         answered.append(text or "")
 
-    monkeypatch.setattr("api.routers.telegram.send_telegram_message", fake_send)
-    monkeypatch.setattr("api.routers.telegram.answer_callback_query", fake_answer)
+    monkeypatch.setattr("api.services.telegram_client.send_message", fake_send)
+    monkeypatch.setattr("api.services.telegram_client.answer_callback_query", fake_answer)
 
     user_id = next(_next_user_id)
     await _onboard(async_client, user_id)

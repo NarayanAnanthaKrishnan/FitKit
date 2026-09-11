@@ -82,6 +82,9 @@ def validate_profile_field(field_key: str, raw_value: str) -> tuple[object, str 
 
 def apply_profile_update(user: UserProfile, field_key: str, value: object) -> None:
     """Apply an already-validated profile value to the model attribute."""
+    value, error = validate_profile_field(field_key, str(value))
+    if error:
+        raise ValueError(error)
     attribute = PROFILE_FIELD_MAP[field_key]
     setattr(user, attribute, value)
 

@@ -22,7 +22,7 @@ async def _isolate_workouts(db_session):
 
 
 class TestRecommend:
-    RECOMMEND_URL = "/recommend/barbell_bench_press"
+    RECOMMEND_URL = "/recommend/barbell_bench_press?target_reps=8"
 
     async def test_unknown_exercise_returns_404(self, async_client: AsyncClient):
         resp = await async_client.get("/recommend/nonexistent_lift")

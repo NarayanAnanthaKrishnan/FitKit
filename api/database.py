@@ -1,7 +1,7 @@
 import csv
 import os
 from collections.abc import AsyncGenerator
-from pathlib import Path
+from importlib.resources import files
 
 from dotenv import load_dotenv
 from sqlalchemy import func, select
@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import (
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+from api.config import settings
+DATABASE_URL = settings.database_url
 if not DATABASE_URL:
     raise RuntimeError(
         "DATABASE_URL is required. Copy .env.example to .env and configure it."
@@ -37,25 +38,14 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def seed_exercise_taxonomy(db: AsyncSession):
     from api.models.db import ExerciseTaxonomy
-
-    count = await db.scalar(select(func.count(ExerciseTaxonomy.name)))
-    if count and count > 0:
-        return
-
-    csv_path = (
-        Path(__file__).resolve().parent.parent / "docs" / "exercise_taxonomy.csv"
-    )
-    if not csv_path.exists():
-        return
-
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            db.add(
-                ExerciseTaxonomy(
-                    name=row["name"],
-                    display_name=row["display_name"],
-                    muscle_group=row["muscle_group"],
-                    equipment=row["equipment"],
-                )
-            )
+    from sqlalchemy.dialects.postgresql import insert
+    csv_path = files("api").joinpath("data/exercise_taxonomy.csv")
+    if not csv_path.is_file():
+        raise RuntimeError("Packaged exercise taxonomy is missing")
+    with csv_path.open("r", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    if not rows:
+        raise RuntimeError("Packaged exercise taxonomy is empty")
+    stmt = insert(ExerciseTaxonomy).values(rows)
+    await db.execute(stmt.on_conflict_do_update(index_elements=["name"], set_={key: getattr(stmt.excluded, key) for key in ("display_name", "muscle_group", "equipment")}))
     await db.commit()

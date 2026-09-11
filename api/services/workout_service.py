@@ -14,6 +14,9 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from api.models.db import ExerciseSet, ExerciseTaxonomy, WorkoutSession
 from api.services.workout_parser import ALIASES, compact
+from api.commands import WorkoutCommand
+from api.services.preferences_service import local_today
+from api.services.audit_service import audit
 
 MAX_CANDIDATES = 6
 
@@ -84,13 +87,19 @@ async def create_workout(
     workout_date: date,
     sets: list[dict[str, Any]],
     *,
-    session_feeling_energy: int = 3,
+    session_feeling_energy: int | None = None,
     session_feeling_soreness: list[str] | None = None,
     session_feeling_mood: Optional[str] = None,
     watch_data_available: bool = False,
 ) -> WorkoutSession:
     """Persist a workout session and its sets. Raises ``ValueError`` on an
     unknown exercise; callers translate that to their own error contract."""
+    command = WorkoutCommand.model_validate({"date": workout_date, "sets": sets})
+    if session_feeling_energy is not None and (type(session_feeling_energy) is not int or not 1 <= session_feeling_energy <= 5):
+        raise ValueError("Energy must be an explicit whole number from 1 to 5")
+    if command.date > await local_today(db, user_id):
+        raise ValueError("A completed workout cannot be in the future.")
+    sets = [s.model_dump(exclude_none=True) for s in command.sets]
     for s in sets:
         if await db.get(ExerciseTaxonomy, s["exercise_name"]) is None:
             raise ValueError(f"Unknown exercise: '{s['exercise_name']}'")
@@ -122,6 +131,7 @@ async def create_workout(
     # so the sets are attached via cascade without an async lazy-load.
     session.sets = db_sets
     await db.flush()
+    audit(db, user_id, "log_workout", {"workout_id": str(session.id), "sets": len(sets)})
     return session
 
 
@@ -148,14 +158,33 @@ async def exercise_history(
     """Return sessions (with sets eager-loaded) containing the exercise, newest first."""
     stmt = (
         select(WorkoutSession)
-        .where(WorkoutSession.user_id == user_id)
-        .order_by(WorkoutSession.date.desc())
+        .where(WorkoutSession.user_id == user_id,
+               WorkoutSession.sets.any(ExerciseSet.exercise_name == exercise_name))
+        .order_by(WorkoutSession.date.desc(), WorkoutSession.id.desc())
         .limit(limit)
         .options(selectinload(WorkoutSession.sets))
     )
     sessions = (await db.scalars(stmt)).all()
-    return [
-        s
-        for s in sessions
-        if any(es.exercise_name == exercise_name for es in s.sets)
-    ]
+    return list(sessions)
+
+
+async def correct_workout(db, user_id, workout_id, expected_revision, workout_date, sets):
+    command = WorkoutCommand.model_validate({"date": workout_date, "sets": sets})
+    if command.date > await local_today(db, user_id):
+        raise ValueError("A completed workout cannot be in the future")
+    session = await db.scalar(select(WorkoutSession).where(WorkoutSession.id == workout_id, WorkoutSession.user_id == user_id)
+        .with_for_update().options(selectinload(WorkoutSession.sets)).execution_options(populate_existing=True))
+    if session is None or session.revision != expected_revision:
+        raise ValueError("Workout changed; create a fresh correction preview")
+    for item in command.sets:
+        if await db.get(ExerciseTaxonomy, item.exercise_name) is None:
+            raise ValueError("Unknown exercise")
+    previous = {"date": session.date.isoformat(), "revision": session.revision,
+                "sets": [{"exercise_name": s.exercise_name, "reps": s.reps, "weight_kg": s.weight_kg, "rpe": s.rpe,
+                          "rest_seconds": s.rest_seconds, "avg_heart_rate": s.avg_heart_rate} for s in session.sets]}
+    session.date = command.date
+    session.revision += 1
+    session.sets = [ExerciseSet(**{**item.model_dump(exclude_none=True), "set_number": index}) for index, item in enumerate(command.sets, 1)]
+    audit(db, user_id, "correct_workout", {"workout_id": str(session.id), "previous": previous})
+    await db.flush()
+    return session

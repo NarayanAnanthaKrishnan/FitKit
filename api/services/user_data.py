@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.db import (
@@ -15,6 +15,8 @@ from api.models.db import (
     UserProfile,
     WeightMeasurement,
     WorkoutSession,
+    DeliveryJob,
+    LLMUsage,
 )
 
 
@@ -30,6 +32,7 @@ async def delete_user_data(
     allowing a retry to recreate the deleted identity. The service accepts
     internal ownership plus an idempotency key, never a Telegram payload.
     """
+    await db.scalar(select(UserProfile.id).where(UserProfile.id == user_id).with_for_update())
     telegram_user_id = await db.scalar(
         select(TelegramIdentity.telegram_user_id).where(
             TelegramIdentity.user_id == user_id
@@ -47,6 +50,8 @@ async def delete_user_data(
     await db.execute(delete(AgentAction).where(AgentAction.user_id == user_id))
     await db.execute(delete(HealthPairing).where(HealthPairing.user_id == user_id))
     await db.execute(delete(DashboardLink).where(DashboardLink.user_id == user_id))
+    await db.execute(delete(DeliveryJob).where(DeliveryJob.user_id == user_id))
+    await db.execute(delete(LLMUsage).where(LLMUsage.scope == str(user_id)))
 
     if telegram_user_id is not None:
         update_filter = TelegramUpdate.telegram_user_id == telegram_user_id
@@ -54,7 +59,8 @@ async def delete_user_data(
             update_filter = update_filter & (
                 TelegramUpdate.update_id != current_update_id
             )
-        await db.execute(delete(TelegramUpdate).where(update_filter))
+        await db.execute(update(TelegramUpdate).where(update_filter).values(telegram_user_id=None,
+            encrypted_payload=None, status="cancelled", lease_token=None, lease_until=None))
 
     await db.execute(delete(TelegramIdentity).where(TelegramIdentity.user_id == user_id))
     await db.execute(delete(UserProfile).where(UserProfile.id == user_id))
@@ -67,5 +73,6 @@ async def delete_user_data(
                 telegram_user_id=None,
                 processed_at=func.now(),
                 status="processed",
+                encrypted_payload=None,
             )
         )

@@ -1,6 +1,28 @@
 # FitKit Data Schema
 
-This document describes the current persistence model and planned additions required for the Telegram-first product. The initial Telegram identity, update-idempotency, and weight-measurement tables are implemented; a planned table is not considered complete until it is covered by migrations and tests.
+This document describes persistence through Alembic revision `20260911_0014`. Planned tables below remain future scope until covered by migrations and tests.
+
+## Private-beta schema additions
+
+| Table/change | Ownership and behavior |
+|---|---|
+| `user_preferences` | Internal `user_id` primary key; timezone (UTC default), display units (kg default), AI consent (off default) and consent timestamp; cascades on account deletion |
+| `exercise_targets` | Composite `(user_id, exercise_name)` key, explicit target reps and optional load increment in kg |
+| `telegram_updates` | Encrypted short-lived payload, attempts, availability, lease token/deadline and safe error code; update ID remains the deduplication key |
+| `delivery_jobs` | User-owned encrypted outbound payload; unique `(update_id, sequence)`; leased retry state and 24-hour payload retention |
+| `ingest_batches` | Composite `(user_id, batch_id)` key, normalized payload fingerprint and count-only outcome; conflicting reuse fails |
+| `llm_usage` | Composite `(scope, UTC day)` counter; global and user attempts reserved transactionally; user counters erased on deletion |
+| `worker_heartbeats` | Operational worker timestamp used by readiness |
+| `workout_sessions.revision` | Optimistic correction version, starting at 1 |
+| `workout_sessions.session_feeling_energy` | Nullable; missing energy is preserved without a guessed score |
+| `conversation_states` | One encrypted, expiring focused follow-up per user; optimistic revision and rotating opaque token hash |
+| `interaction_events` | Content-free routing/outcome/reason/latency/rating telemetry scoped to the user |
+| `feedback_samples` | Explicitly consented encrypted feedback text with a 30-day expiry |
+| `user_memories` | Explicitly confirmed, encrypted conversational preferences; user-scoped and removed on account deletion |
+
+Completed/expired queue payloads are cleared. Account deletion clears queued content and external user IDs from all existing update markers, cancels/removes deliveries, and deletes preferences, targets, batches, actions and user counters. Anonymous update IDs remain to stop old receipt replay from recreating an account. A stale callback cannot create an identity.
+
+Revision `0009` expires old pending previews and ignores pre-queue received markers. Revision `0010` permits optional energy. Its downgrade refuses to fabricate energy for data that cannot fit the old schema; restore a pre-upgrade backup or review an explicit migration instead.
 
 ## Data ownership rule
 
@@ -33,7 +55,7 @@ The profile should eventually contain stable account metadata separately from fi
 | `id` | `UUID` | Primary key |
 | `user_id` | `UUID` | Foreign key to `user_profiles.id` |
 | `date` | `date` | Workout date |
-| `session_feeling_energy` | `int` | 1–5 |
+| `session_feeling_energy` | `int?` | Optional, 1–5 |
 | `session_feeling_soreness` | `text` | Stored body-area tags in the current prototype |
 | `session_feeling_mood` | `text?` | Optional user note |
 | `watch_data_available` | `bool` | Indicates whether associated watch data was available |
@@ -88,7 +110,26 @@ The taxonomy is seeded from `docs/exercise_taxonomy.csv`.
 
 ## Telegram/account entities
 
-`telegram_identities`, `telegram_updates`, `weight_measurements`, `fitness_goals`, `agent_actions`, `health_pairings`, and `dashboard_links` are implemented. Conversations and messages remain planned for the later LLM phase.
+`telegram_identities`, `telegram_updates`, `weight_measurements`, `fitness_goals`, `agent_actions`, `health_pairings`, `dashboard_links`, and short-lived `conversation_turns` are implemented. Long-term conversation archives remain out of scope.
+
+### Conversation context (implemented)
+
+Opted-in natural conversation keeps at most 12 encrypted turns per user for up to 24 hours. Only the last six are sent as context. Turning conversation off deletes the user's turns, and account deletion cascades to them. Plain conversation content is never stored in this table.
+
+```text
+conversation_turns
+------------------
+ id
+ user_id
+ role                    user or assistant
+ kind                    semantic turn type
+ encrypted_content       Fernet ciphertext
+ created_at
+```
+
+Focused conversation state expires after 15 minutes. Conversation turns carry an explicit user/assistant position so equal timestamps cannot reverse context. Interaction events never contain message text, extracted measurements, health values, or identifiers from URLs; nullable task IDs and stages measure content-free routine-review progress. A thumbs-down can open a feedback flow, but text is persisted only after the user accepts the disclosure and presses Share; it is encrypted and expires after 30 days.
+
+Long-term conversational preferences are stored separately in `user_memories`. The pending `agent_actions` payload is encrypted too, so preference text is never left in plaintext while awaiting confirmation. Generic memory rejects sensitive health details; those require a dedicated health-data flow. Workouts, weights, goals, targets, profile fields, and health metrics remain authoritative in their structured tables rather than being duplicated into conversational memory.
 
 ### Telegram identity (implemented)
 
@@ -146,7 +187,7 @@ fitness_goals
 
 ### Conversations and actions
 
-`agent_actions` is implemented and doubles as the pending-confirmation store and the audit trail for every interpreted mutation (`update_profile`, `create_goal`, `delete_goal`, `record_weight`, `log_workout`). A pending action carries an opaque `confirmation_token`; inline buttons resolve it and confirmation is always scoped by internal `user_id`. Full `conversations`/`messages` persistence remains planned for the later LLM phase.
+`agent_actions` is implemented and doubles as the pending-confirmation store and the audit trail for every interpreted mutation (`update_profile`, `create_goal`, `delete_goal`, `record_weight`, `log_workout`). A pending action carries an opaque `confirmation_token`; inline buttons resolve it and confirmation is always scoped by internal `user_id`. Long-term `conversations`/`messages` persistence remains out of scope.
 
 The agent will need traceability:
 
@@ -285,12 +326,8 @@ hydration_logs
  source                 telegram | manual
  created_at
 
-user_preferences
-----------------
- id
- user_id                unique
- units                  kg | lb
- timezone               IANA string, e.g. "Asia/Kolkata"
+future preference extensions (user_preferences already exists)
+-----------------------------------------------------------
  wake_window_start/end  time — nudges only fire inside this window
  nudges_enabled         bool — default false, opt-in
  quiet_hours            nullable window that suppresses nudges
@@ -298,9 +335,9 @@ user_preferences
  updated_at
 ```
 
-- `food_logs`/`hydration_logs`/`user_preferences` are user-owned (`user_id` FK), participate in `delete_user_data()`, and are covered by `agent_actions` types `log_food` / `log_water`.
+- Future `food_logs`/`hydration_logs` must be user-owned (`user_id` FK), participate in `delete_user_data()`, and be covered by new `agent_actions` types `log_food` / `log_water`.
 - `agent_actions` gains `log_food` / `log_water` action types with the same confirmation-token + TTL policy.
-- Deterministic hydration/calorie targets live in `engine/` (e.g., `30–35 ml/kg` + training-volume adjustment) and remain the source of truth; Groq only parses and phrases.
+- Any future hydration/calorie targets belong in `engine/`, with explicit required inputs and reviewed assumptions; Groq only parses and phrases.
 
 ## Fitness data rules
 
@@ -308,7 +345,7 @@ user_preferences
 - Health data is optional; missing health data results in a less specific recommendation, not a separate code path.
 - Weight history is append-only by default; corrections are explicit events.
 - User-owned data is always filtered by internal `user_id`.
-- Destructive data deletion requires explicit `DELETE` confirmation, is scoped by internal `user_id`, and should be auditable. The current Telegram implementation retains only the current update-idempotency marker with its external user ID cleared so a webhook retry cannot recreate the deleted account.
+- Destructive data deletion requires explicit `DELETE` confirmation and is scoped by internal `user_id`. All existing update-idempotency markers retain only operational metadata with external identity and content cleared.
 - Health data must not be used for advertising or unrelated purposes.
 
 See `fitness-agent-implementation-plan.md` for the migration order and acceptance criteria.

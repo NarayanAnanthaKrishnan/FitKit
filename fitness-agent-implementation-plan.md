@@ -1,8 +1,8 @@
 # FitKit — Telegram-First Fitness Coach Implementation Plan
 
-> **Planning status:** Approved direction — Safe Telegram MVP.
+> **Historical roadmap:** The active private-beta implementation and rollout gates are now in [docs/private_beta.md](docs/private_beta.md), with deployment instructions in [docs/operations.md](docs/operations.md). This document preserves the earlier product direction; statements about unimplemented infrastructure below may have been superseded.
 >
-> This document is the implementation source of truth for the Telegram-first product. It records what already exists, what must be built next, why the work is ordered this way, and where an LLM may safely add value. No LLM, hosting provider, or paid integration is approved merely by appearing in this document; provider selection happens after a benchmark and privacy review.
+> The current milestone improves existing routines, keeps profile fields optional, and requires per-user AI consent. Hosting and paid live evaluation still need deployment configuration; their appearance in a roadmap does not establish operational readiness.
 
 ## 1. Product definition
 

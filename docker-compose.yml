@@ -1,36 +1,68 @@
-# Staging stack: PostgreSQL + FitKit API.
-# Secrets are provided via environment variables (a `.env` file next to this
-# file, or the shell environment), never committed.
+name: fitkit
+
+x-runtime: &runtime
+  build: .
+  image: fitkit:local
+  env_file: .env
+  environment: &environment
+    DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/fitkit
+    FITKIT_PRODUCTION: ${FITKIT_PRODUCTION:-1}
+    ALLOW_LEGACY_INGEST_AUTH: "0"
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs: /tmp
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
 services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fitkit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
       POSTGRES_DB: fitkit
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d fitkit"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  app:
-    build: .
+  migrate:
+    <<: *runtime
+    restart: "no"
+    command: ["python", "-m", "alembic", "upgrade", "head"]
     depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-fitkit}@db:5432/fitkit
-      FITKIT_API_KEY: ${FITKIT_API_KEY}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET}
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
-      ALLOW_LEGACY_INGEST_AUTH: ${ALLOW_LEGACY_INGEST_AUTH:-1}
-      DASHBOARD_LINK_TTL_SECONDS: ${DASHBOARD_LINK_TTL_SECONDS:-900}
-    ports:
-      - "8000:8000"
+      db: {condition: service_healthy}
+
+  app:
+    <<: *runtime
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  worker:
+    <<: *runtime
+    command: ["python", "-m", "api.worker"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  proxy:
+    image: nginx:stable-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["443:443"]
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${FITKIT_TLS_DIR:?Set FITKIT_TLS_DIR to a certificate directory}:/etc/fitkit/tls:ro
 
 volumes:
   pgdata:

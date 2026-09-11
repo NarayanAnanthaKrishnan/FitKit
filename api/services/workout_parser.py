@@ -51,12 +51,16 @@ ALIASES: dict[str, str] = {
 
 _RPE_RE = re.compile(r"\brpe\s*(?:of\s*)?(\d{1,2})\b", re.IGNORECASE)
 _SETS_X_REPS_RE = re.compile(r"\b(\d{1,3})\s*[x×*]\s*(\d{1,3})\b")
+_SETS_OF_REPS_RE = re.compile(
+    r"\b(\d{1,3})\s+sets?\s+(?:of\s+)?(\d{1,3})(?:\s+reps?)?\b",
+    re.IGNORECASE,
+)
 _WEIGHT_RE = re.compile(
     r"\b(\d+(?:\.\d+)?)\s*(?:kgs?|kg|lbs?|lb)\b", re.IGNORECASE
 )
 _FOR_REPS_RE = re.compile(r"\bfor\s+(\d[\d,\s]*)\b", re.IGNORECASE)
 
-_NOISE_WORDS = {"at", "for", "on", "today", "kg", "lb", "lbs", "kgs", "rpe"}
+_NOISE_WORDS = {"at", "for", "on", "today", "kg", "lb", "lbs", "kgs", "rpe", "set", "sets", "rep", "reps", "of"}
 
 
 @dataclass
@@ -86,6 +90,9 @@ def _clean_residual(text: str) -> str:
 def parse_workout(text: str) -> tuple[ParsedWorkout | None, str | None]:
     """Parse a workout log into typed data, or return ``(None, error)``."""
     working = (text or "").strip()
+    if re.search(r"(?:^|\s)-\d|\brpe\s+\d+\.\d", working, re.I):
+        return None, "Loads must be nonnegative and RPE must be a whole number."
+    working = re.sub(r"\bbodyweight\b", "0 kg", working, flags=re.I)
     if not working:
         return None, "Please describe a workout, e.g. 'bench press 3x8 at 80 kg, rpe 8'."
 
@@ -102,6 +109,11 @@ def parse_workout(text: str) -> tuple[ParsedWorkout | None, str | None]:
     if match:
         sets_reps = (int(match.group(1)), int(match.group(2)))
         working = _SETS_X_REPS_RE.sub(" ", working, count=1)
+    else:
+        match = _SETS_OF_REPS_RE.search(working)
+        if match:
+            sets_reps = (int(match.group(1)), int(match.group(2)))
+            working = _SETS_OF_REPS_RE.sub(" ", working, count=1)
 
     entered_weight: float | None = None
     weight_kg: float | None = None
@@ -130,7 +142,7 @@ def parse_workout(text: str) -> tuple[ParsedWorkout | None, str | None]:
 
     if weight_kg is None:
         return None, "Please include a weight, e.g. '80 kg'."
-    if not 0 < weight_kg <= 1000:
+    if not 0 <= weight_kg <= 1000:
         return None, "Weight must be between 0 and 1000 kg."
 
     if sets_reps is None and for_reps is None:

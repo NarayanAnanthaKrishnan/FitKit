@@ -9,6 +9,7 @@ from api.models.db import UserProfile
 from api.dependencies.auth import secret_matches
 from api.services.health_pairing_service import resolve_user_by_pairing
 from api.services.user_scope import get_user_by_telegram_id
+from api.config import settings
 
 
 async def get_ingest_user(
@@ -38,12 +39,12 @@ async def get_ingest_user(
 
     # Legacy bridge is disabled by default; enable it only while existing
     # Health Auto Export users still authenticate with the global API key.
-    if os.getenv("ALLOW_LEGACY_INGEST_AUTH", "0") != "1":
+    if not settings.allow_legacy_ingest_auth:
         raise HTTPException(
             status_code=401, detail="X-Health-Pairing-Token header is required"
         )
 
-    if not secret_matches(x_api_key, os.environ.get("FITKIT_API_KEY")):
+    if not secret_matches(x_api_key, settings.fitkit_api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
     if telegram_user_id is None:
         raise HTTPException(
